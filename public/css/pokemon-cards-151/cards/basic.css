@@ -1,0 +1,19 @@
+/*
+
+  BASIC CARDS
+
+*/
+
+
+
+/*
+
+  GLARE LAYERS
+
+*/
+
+.card[data-rarity="common"] .card__glare {
+
+  opacity: calc( var(--card-opacity) * .5 );
+
+}

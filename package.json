@@ -1,0 +1,23 @@
+{
+  "name": "framigosx-holo-studio",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "license": "GPL-3.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "gifenc": "^1.0.3",
+    "mp4-muxer": "^5.2.2",
+    "pdf-lib": "^1.17.1"
+  }
+}

@@ -9,7 +9,7 @@ export function encodeTiff(
   height: number,
   channels: 1 | 3,
   dpi: number,
-  software = 'FramigosX Holo Studio',
+  software = 'FX Studio by @stoopiducky',
 ): Uint8Array {
   const tags: { tag: number; type: number; count: number; value: number | number[] | string }[] = [];
   const SHORT = 3, LONG = 4, RATIONAL = 5, ASCII = 2;

@@ -153,11 +153,12 @@ class ImagingClient {
     frame: Frame,
     dpi: number,
   ) {
-    this.ensure([foilId, ...(maskSpec ? this.idsOf(maskSpec) : [])]);
+    const validFoilId = foilId && assets.get(foilId) ? foilId : null;
+    this.ensure([validFoilId, ...(maskSpec ? this.idsOf(maskSpec) : [])]);
     return this.call<{ w: number; h: number; tint: Uint8Array; tiff: Uint8Array }>({
       type: 'holoPatternPlate',
       styleId,
-      foilId,
+      foilId: validFoilId,
       presetFoilBlob,
       maskSpec,
       angleDeg,

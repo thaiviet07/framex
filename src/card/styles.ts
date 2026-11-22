@@ -140,21 +140,58 @@ export const NO_HOLO: HoloStyle = { id: 'none', engine: 'css', label: 'Không ho
 
 let currentEngine: EngineId = 'css';
 
-/** Swap engine stylesheets (both engines define the same selectors, so only one may be active). */
-export async function loadEngine(engine: EngineId, anchor: Element): Promise<void> {
-  if (engine === currentEngine) return;
-  const cfg = ENGINES[engine];
-  const olds = [...document.querySelectorAll('link[data-engine]')];
+/** Non-conflicting rarity-specific stylesheets per engine that can safely coexist when mixing Multi-Holo engines. */
+const EXTRA_ENGINE_FILES: Record<EngineId, string[]> = {
+  css: [
+    'cards/cosmos-holo.css', 'cards/amazing-rare.css', 'cards/v-regular.css', 'cards/v-full-art.css',
+    'cards/v-max.css', 'cards/v-star.css', 'cards/trainer-full-art.css', 'cards/rainbow-holo.css',
+    'cards/secret-rare.css', 'cards/trainer-gallery-holo.css', 'cards/trainer-gallery-v-regular.css',
+    'cards/trainer-gallery-v-max.css', 'cards/trainer-gallery-secret-rare.css',
+    'cards/shiny-rare.css', 'cards/shiny-v.css', 'cards/shiny-vmax.css', 'cards/swsh-pikachu.css',
+  ],
+  '151': [
+    'cards/ex-regular.css', 'cards/ex-full-art.css', 'cards/illustration-rare.css',
+    'cards/poke-ball-holo.css', 'cards/ex-special-illustration-rare.css', 'cards/hyper-rare.css',
+  ],
+};
+
+/** Swap engine stylesheets and optionally mount non-conflicting rarity sheets from the other engine for mixed Multi-Holo stacks. */
+export async function loadEngine(engine: EngineId, anchor: Element, needMixed = false): Promise<void> {
+  if (engine !== currentEngine) {
+    const cfg = ENGINES[engine];
+    const olds = [...document.querySelectorAll('link[data-engine]')];
+    await Promise.all(
+      cfg.files.map((file) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.dataset.engine = engine;
+        link.href = cfg.dir + file;
+        anchor.before(link);
+        return new Promise((resolve) => (link.onload = link.onerror = resolve));
+      }),
+    );
+    olds.forEach((l) => l.remove());
+    currentEngine = engine;
+  }
+
+  // Load/unload extra non-conflicting rarity sheets from the other engine when Multi-Holo mixes css + 151
+  const other: EngineId = engine === 'css' ? '151' : 'css';
+  const existingExtras = [...document.querySelectorAll('link[data-engine-extra]')];
+  if (!needMixed) {
+    existingExtras.forEach((l) => l.remove());
+    return;
+  }
+  if (existingExtras.length > 0 && existingExtras[0].getAttribute('data-engine-extra') === other) return;
+  existingExtras.forEach((l) => l.remove());
+  const otherDir = ENGINES[other].dir;
   await Promise.all(
-    cfg.files.map((file) => {
+    EXTRA_ENGINE_FILES[other].map((file) => {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.dataset.engine = engine;
-      link.href = cfg.dir + file;
+      link.dataset.engineExtra = other;
+      link.href = otherDir + file;
       anchor.before(link);
       return new Promise((resolve) => (link.onload = link.onerror = resolve));
     }),
   );
-  olds.forEach((l) => l.remove());
-  currentEngine = engine;
 }

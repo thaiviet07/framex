@@ -158,7 +158,7 @@ export function renderFlat(canvas: HTMLCanvasElement, opt: FlatOptions) {
 
     // Dimension label
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.font = '500 12px "Zen Kaku Gothic New", system-ui, sans-serif';
+    ctx.font = '500 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(
       `Trim ${specs.widthMm}×${specs.heightMm} mm • Bleed ${specs.bleedMm} mm • Safe ${specs.safeMm} mm • Corner R${specs.cornerMm} mm`,

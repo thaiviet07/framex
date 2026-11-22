@@ -13,7 +13,7 @@ import { renderFlat } from './render/FlatRenderer';
 import { imaging } from './imaging/client';
 import { PREFLIGHT_HEIGHT, runPreflight, type PreflightIssue } from './preflight/preflight';
 import { exportProductionZip } from './export/exporter';
-import { generateMockupMp4 } from './export/mockupVideo';
+import { generateMockupMp4, generateMockupPng } from './export/mockupVideo';
 import { clearWorkspace, loadWorkspaceTabs, saveWorkspaceTabs } from './storage/db';
 import { packProject, unpackProject } from './storage/projectFile';
 import { renderPanel, type PanelCallbacks } from './ui/panels';
@@ -208,7 +208,11 @@ const sideDraws: Record<Side, LayerDraw[]> = { front: [], back: [] };
 const sideArt: Record<Side, { data: Uint8ClampedArray; w: number; h: number } | null> = { front: null, back: null };
 const maskThumbs = new Map<string, string>();
 let preflightIssues: PreflightIssue[] = [];
-let exportState = { busy: false, pct: 0, label: '' };
+let exportState: { busy: boolean; pct: number; label: string; downloadUrl?: string; downloadName?: string; downloadSize?: number } = {
+  busy: false,
+  pct: 0,
+  label: '',
+};
 const holoMaskCache = new Map<string, { key: string; url: string }>();
 let lastArtKey = '';
 let lastTechKey = '';
@@ -237,7 +241,7 @@ $('#veil').addEventListener('click', () => card.deactivate());
 // ---------------- Theme ----------------
 const media = window.matchMedia('(prefers-color-scheme: dark)');
 const metaTheme = $<HTMLMetaElement>('#theme-color');
-const THEME_COLOR = { light: '#E0E0E0', dark: '#262626' };
+const THEME_COLOR = { light: '#fafafa', dark: '#19191b' };
 
 function applyTheme() {
   const mode = store.ui.theme;
@@ -257,7 +261,7 @@ media.addEventListener('change', () => { if (store.ui.theme === 'system') applyT
 
 // ---------------- Topbar & Tabs ----------------
 projectNameInput.addEventListener('change', () => {
-  const v = projectNameInput.value.trim() || 'FramigosX Card';
+  const v = projectNameInput.value.trim() || 'FX Card';
   store.update((d) => { d.name = v; });
 });
 
@@ -360,18 +364,20 @@ function applyLangUI() {
   $('#btn-undo').setAttribute('title', t('top.undo'));
   $('#btn-redo').setAttribute('title', t('top.redo'));
   projectNameInput.setAttribute('aria-label', t('top.projectName'));
-  hudHintEl.textContent = t('hud.hint');
+  const isVi = lang === 'vi';
+  hudHintEl.innerHTML = isVi
+    ? '<kbd>Scroll</kbd> Zoom <span class="hud-sep">·</span> <kbd>Space</kbd> + Kéo Pan'
+    : '<kbd>Scroll</kbd> Zoom <span class="hud-sep">·</span> <kbd>Space</kbd> + Drag Pan';
   $$('[data-tab]').forEach((b) => {
     const k = (b as HTMLElement).dataset.tab!;
     b.textContent = t(`tab.${k}`);
   });
   // Populate quick HDRI environment selector
-  const isVi = lang === 'vi';
   quickHdriSelect.innerHTML = '';
   for (const pr of ENV_PRESETS) {
-    quickHdriSelect.append(el('option', { value: pr.id }, `☀ ${isVi ? pr.labelVi : pr.labelEn}`));
+    quickHdriSelect.append(el('option', { value: pr.id }, isVi ? pr.labelVi : pr.labelEn));
   }
-  quickHdriSelect.append(el('option', { value: '__custom__' }, isVi ? '🖼 HDRI Tùy chỉnh...' : '🖼 Custom HDRI...'));
+  quickHdriSelect.append(el('option', { value: '__custom__' }, isVi ? 'HDRI tùy chỉnh…' : 'Custom HDRI…'));
   if (store.project) {
     const env = normalizeEnv(store.project.env);
     quickHdriSelect.value = env.customAssetId ? '__custom__' : env.preset;
@@ -434,23 +440,22 @@ document.addEventListener('keyup', (e) => {
 
 // ---------------- Default Project & Tab Operations ----------------
 async function createDefaultProject(customName?: string): Promise<Project> {
-  const [front, back, maskImg, foilImg] = await Promise.all([
+  const [front, back, maskImg] = await Promise.all([
     assets.addFromUrl('img/card.webp', 'card.webp'),
     assets.addFromUrl('img/card_back.webp', 'card_back.webp'),
     assets.addFromUrl('img/card_mask.webp', 'card_mask.webp'),
-    assets.addFromUrl('img/card_foil.webp', 'card_foil.webp'),
   ]);
   const defaultMask = newMask({ name: 'Default Card Mask', sourceId: maskImg.id, mode: 'luminance' });
   const backAutoMask = newMask({ name: 'Back Artwork Mask', sourceId: back.id, mode: 'luminance', levelsLow: 60, levelsHigh: 220 });
   return {
     version: 2,
-    name: customName ?? 'FramigosX Card',
+    name: customName ?? 'FX Card',
     specs: defaultSpecs(),
     sides: {
       front: { artworkId: front.id, fit: 'auto' },
       back: { artworkId: back.id, fit: 'auto' },
     },
-    holo: defaultHoloConfig(DEFAULT_STYLE, defaultMask.id, foilImg.id),
+    holo: defaultHoloConfig(DEFAULT_STYLE, defaultMask.id, null),
     env: defaultEnvConfig(),
     masks: [defaultMask, backAutoMask],
     layers: [],
@@ -495,7 +500,7 @@ function switchTab(id: string) {
 async function createNewTab() {
   saveCurrentTabSnapshot();
   const num = projectTabs.length + 1;
-  const proj = await createDefaultProject(`FramigosX Card ${num}`);
+  const proj = await createDefaultProject(`FX Card ${num}`);
   const tab: TabEntry = { id: uid('tab'), project: proj, preflight: [], zoom: 1, panX: 0, panY: 0 };
   projectTabs.push(tab);
   activateTab(tab.id);
@@ -519,7 +524,7 @@ async function closeTab(id: string) {
   const idx = projectTabs.findIndex((x) => x.id === id);
   if (idx < 0) return;
   if (projectTabs.length === 1) {
-    const fresh = await createDefaultProject('FramigosX Card');
+    const fresh = await createDefaultProject('FX Card');
     projectTabs = [{ id: uid('tab'), project: fresh, preflight: [], zoom: 1, panX: 0, panY: 0 }];
     activateTab(projectTabs[0].id);
     persist();
@@ -610,10 +615,13 @@ async function syncProject(p: Project) {
     ? p.holo.layers.filter((hl) => (soloHoloId ? hl.id === soloHoloId : hl.visible))
     : [];
 
-  const activeEngine = visHoloLayers.length
-    ? (STYLES.find((x) => x.id === visHoloLayers[visHoloLayers.length - 1].styleId)?.engine ?? 'css')
-    : 'css';
-  await loadEngine(activeEngine, $('#engine-anchor'));
+  const enginesUsed = new Set(
+    visHoloLayers.map((hl) => STYLES.find((x) => x.id === hl.styleId)?.engine ?? 'css'),
+  );
+  // Always use '151' as base engine whenever ANY visible layer uses '151' because 151's base.css/cards.css
+  // is a superset defining --holo, --sunpillar, .card__glitter & .card__glare2 needed by 151 presets.
+  const activeEngine = enginesUsed.has('151') ? '151' : 'css';
+  await loadEngine(activeEngine, $('#engine-anchor'), enginesUsed.size > 1);
   if (seq !== syncSeq) return;
   card.setEngine(activeEngine);
 
@@ -870,41 +878,45 @@ const persist = debounce(() => {
 }, 600);
 
 // ---------------- Mockup Capture ----------------
+async function buildExportHoloLayers(p: Project, frame: ReturnType<typeof frameForHeight>) {
+  const visHolos = p.holo.enabled ? p.holo.layers.filter((hl) => hl.visible) : [];
+  return Promise.all(
+    visHolos.map(async (layer) => {
+      const spec = imaging.holoMaskSpec(p, layer);
+      const mask = spec.refs.length > 0 && layer.masking.scope !== 'none'
+        ? await imaging.layerMask(spec, frame)
+        : null;
+      let foilImg: HTMLImageElement | null = null;
+      const foilUrl = assets.url(layer.foilId);
+      if (foilUrl) {
+        foilImg = await new Promise<HTMLImageElement | null>((resolve) => {
+          const im = new Image();
+          im.onload = () => resolve(im);
+          im.onerror = () => resolve(null);
+          im.src = foilUrl;
+        });
+      }
+      return { layer, mask, foilImg };
+    }),
+  );
+}
+
 async function captureMockupBlob(): Promise<Blob | null> {
   try {
     const p = store.project;
-    const frame = frameForHeight(p.specs, 900);
-    const tw = frame.trim.w;
-    const th = frame.trim.h;
-    const gap = 36;
-    const pad = 44;
-    const cv = document.createElement('canvas');
-    cv.width = tw * 2 + gap + pad * 2;
-    cv.height = th + pad * 2 + 28;
-    const ctx = cv.getContext('2d')!;
-    ctx.fillStyle = '#1f2326';
-    ctx.fillRect(0, 0, cv.width, cv.height);
-
-    const drawSide = (side: Side, x: number) => {
-      const art = sideArt[side];
-      if (art) {
-        const tmp = document.createElement('canvas');
-        tmp.width = art.w;
-        tmp.height = art.h;
-        tmp.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(art.data), art.w, art.h), 0, 0);
-        ctx.drawImage(tmp, frame.trim.x, frame.trim.y, tw, th, x, pad, tw, th);
-      }
-      const glCanvas = side === 'front' ? card.frontCanvas : card.backCanvas;
-      ctx.drawImage(glCanvas, x, pad, tw, th);
-      ctx.fillStyle = '#d4d8dc';
-      ctx.font = '500 16px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(side === 'front' ? 'FRONT' : 'BACK', x + tw / 2, pad + th + 24);
-    };
-
-    drawSide('front', pad);
-    drawSide('back', pad + tw + gap);
-    return await new Promise((resolve) => cv.toBlob(resolve, 'image/png'));
+    const frame = frameForHeight(p.specs, PREVIEW_H);
+    const holoLayers = await buildExportHoloLayers(p, frame);
+    return await generateMockupPng({
+      project: p,
+      frame,
+      sideArt,
+      frontTech,
+      backTech,
+      frontCanvas: card.frontCanvas,
+      backCanvas: card.backCanvas,
+      holoLayers,
+      restoreState: card.state,
+    });
   } catch {
     return null;
   }
@@ -914,26 +926,7 @@ async function captureMockupVideo(onPct?: (pct: number) => void): Promise<{ blob
   try {
     const p = store.project;
     const frame = frameForHeight(p.specs, PREVIEW_H);
-    const visHolos = p.holo.enabled ? p.holo.layers.filter((hl) => hl.visible) : [];
-    const holoLayers = await Promise.all(
-      visHolos.map(async (layer) => {
-        const spec = imaging.holoMaskSpec(p, layer);
-        const mask = spec.refs.length > 0 && layer.masking.scope !== 'none'
-          ? await imaging.layerMask(spec, frame)
-          : null;
-        let foilImg: HTMLImageElement | null = null;
-        const foilUrl = assets.url(layer.foilId);
-        if (foilUrl) {
-          foilImg = await new Promise<HTMLImageElement | null>((resolve) => {
-            const im = new Image();
-            im.onload = () => resolve(im);
-            im.onerror = () => resolve(null);
-            im.src = foilUrl;
-          });
-        }
-        return { layer, mask, foilImg };
-      }),
-    );
+    const holoLayers = await buildExportHoloLayers(p, frame);
 
     return await generateMockupMp4({
       project: p,
@@ -1006,11 +999,12 @@ const panelCallbacks: PanelCallbacks = {
   },
   async onExportZip(opts) {
     if (exportState.busy) return;
+    if (exportState.downloadUrl) URL.revokeObjectURL(exportState.downloadUrl);
     exportState = { busy: true, pct: 2, label: 'Preparing export...' };
     renderPanel(panelBody, store.project, store.ui, panelCallbacks);
     try {
       const mockupBlob = opts.mockup ? await captureMockupBlob() : null;
-      const mockupVideo = opts.mockup
+      const mockupVideo = opts.video
         ? await captureMockupVideo((pct) => {
             exportState = { busy: true, pct: Math.round(pct * 0.35), label: `Encoding 1080p MP4 (${pct}%)...` };
             renderPanel(panelBody, store.project, store.ui, panelCallbacks);
@@ -1022,19 +1016,23 @@ const panelCallbacks: PanelCallbacks = {
         mockupBlob,
         mockupVideo,
         onProgress: (pct, label) => {
-          const mapped = opts.mockup ? 35 + Math.round(pct * 0.65) : pct;
+          const mapped = opts.video ? 35 + Math.round(pct * 0.65) : pct;
           exportState = { busy: pct < 100, pct: mapped, label };
           renderPanel(panelBody, store.project, store.ui, panelCallbacks);
         },
       });
-      triggerDownload(blob, filename);
+      const downloadUrl = triggerDownload(blob, filename, true);
+      exportState = { busy: false, pct: 100, label: 'Hoàn tất!', downloadUrl, downloadName: filename, downloadSize: blob.size };
+      renderPanel(panelBody, store.project, store.ui, panelCallbacks);
     } catch (err) {
+      console.error('Export ZIP failed:', err);
       exportState = { busy: false, pct: 0, label: `Error: ${(err as Error).message}` };
       renderPanel(panelBody, store.project, store.ui, panelCallbacks);
     }
   },
   async onExportVideo() {
     if (exportState.busy) return;
+    if (exportState.downloadUrl) URL.revokeObjectURL(exportState.downloadUrl);
     exportState = { busy: true, pct: 2, label: 'Encoding 1080p MP4 (10s, 2 loops)...' };
     renderPanel(panelBody, store.project, store.ui, panelCallbacks);
     try {
@@ -1044,10 +1042,12 @@ const panelCallbacks: PanelCallbacks = {
       });
       if (!vid) throw new Error('Failed to encode 1080p video');
       const slug = store.project.name.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'card';
-      exportState = { busy: false, pct: 100, label: `Full HD 1080p ${vid.ext.toUpperCase()} ready!` };
+      const filename = `FXH_${slug}_3d_1080p.${vid.ext}`;
+      const downloadUrl = triggerDownload(vid.blob, filename, true);
+      exportState = { busy: false, pct: 100, label: `Full HD 1080p ${vid.ext.toUpperCase()} ready!`, downloadUrl, downloadName: filename, downloadSize: vid.blob.size };
       renderPanel(panelBody, store.project, store.ui, panelCallbacks);
-      triggerDownload(vid.blob, `FXH_${slug}_3d_1080p.${vid.ext}`);
     } catch (err) {
+      console.error('Export Video failed:', err);
       exportState = { busy: false, pct: 0, label: `Error: ${(err as Error).message}` };
       renderPanel(panelBody, store.project, store.ui, panelCallbacks);
     }
@@ -1119,7 +1119,7 @@ async function boot() {
     const startId = projectTabs.some((x) => x.id === saved.workspace.activeId) ? saved.workspace.activeId : projectTabs[0].id;
     activateTab(startId);
   } else {
-    const def = await createDefaultProject('FramigosX Card');
+    const def = await createDefaultProject('FX Card');
     projectTabs = [{ id: uid('tab'), project: def, preflight: [], zoom: 1, panX: 0, panY: 0 }];
     activateTab(projectTabs[0].id);
   }

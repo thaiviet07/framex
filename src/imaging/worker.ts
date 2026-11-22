@@ -104,6 +104,8 @@ async function maskAsset(m: MaskSpec, frame: Frame): Promise<Gray> {
   let g: Gray;
   if (m.mode === 'solid' || !m.sourceId) {
     g = ops.gray(frame.w, frame.h, 255);
+  } else if (!blobs.has(m.sourceId)) {
+    g = ops.gray(frame.w, frame.h, 0);
   } else {
     const px = await rasterize({ assetId: m.sourceId, fit: m.resolvedFit }, frame);
     const box = m.resolvedFit === 'bleed' ? { x: 0, y: 0, w: frame.w, h: frame.h } : frame.trim;
@@ -290,7 +292,7 @@ async function handle(job: Job): Promise<{ result: unknown; transfer?: Transfera
             pat[row + x] = Math.round((0.25 + 0.75 * Math.max(d1, d2)) * 255);
           }
         }
-      } else if (job.foilId) {
+      } else if (job.foilId && blobs.has(job.foilId)) {
         const px = await rasterize({ assetId: job.foilId, fit: 'bleed' }, job.frame);
         for (let i = 0; i < n; i++) {
           const o = i * 4;
@@ -336,7 +338,7 @@ async function handle(job: Job): Promise<{ result: unknown; transfer?: Transfera
     }
     case 'artworkExport': {
       const n = job.frame.w * job.frame.h;
-      const px = job.src ? await rasterize(job.src, job.frame) : new Uint8ClampedArray(n * 4);
+      const px = job.src && blobs.has(job.src.assetId) ? await rasterize(job.src, job.frame) : new Uint8ClampedArray(n * 4);
       const rgb = rgbOnWhite(px, n);
       const tiff = encodeTiff(rgb, job.frame.w, job.frame.h, 3, job.dpi);
       const rgbCopy = new Uint8Array(rgb);

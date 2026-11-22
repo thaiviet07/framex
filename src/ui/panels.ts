@@ -1,4 +1,5 @@
 import { el } from './dom';
+import { icon } from './icons';
 import { store, type UIState } from '../model/store';
 import { assets } from '../model/assets';
 import { CARD_PRESETS, fmtUnit, fromUnit, toUnit } from '../model/units';
@@ -28,16 +29,16 @@ export interface PanelCallbacks {
   onUploadFile: (file: File, target: 'front' | 'back' | 'holoMask' | 'holoFoil' | 'newMask' | 'envMap', holoLayerId?: string) => Promise<void>;
   onResetDefaults: () => Promise<void>;
   onRunPreflight: () => Promise<void>;
-  onExportZip: (opts: { pdf: boolean; tiffs: boolean; holoPattern: boolean; dieline: boolean; mockup: boolean; specSheet: boolean }) => Promise<void>;
+  onExportZip: (opts: { pdf: boolean; tiffs: boolean; holoPattern: boolean; dieline: boolean; mockup: boolean; video: boolean; specSheet: boolean }) => Promise<void>;
   onExportVideo: () => Promise<void>;
   onSaveProject: () => Promise<void>;
   onOpenProject: () => void;
   getPreflight: () => PreflightIssue[];
   getMaskThumb: (id: string) => string | null;
-  getExportState: () => { busy: boolean; pct: number; label: string };
+  getExportState: () => { busy: boolean; pct: number; label: string; downloadUrl?: string; downloadName?: string; downloadSize?: number };
 }
 
-const exportChecks = { pdf: true, tiffs: true, holoPattern: true, dieline: true, mockup: true, specSheet: true };
+const exportChecks = { pdf: true, tiffs: true, holoPattern: true, dieline: true, mockup: true, video: false, specSheet: true };
 
 export function renderPanel(container: HTMLElement, p: Project, ui: UIState, cb: PanelCallbacks) {
   const scroll = container.scrollTop;
@@ -137,7 +138,7 @@ function renderArtworkTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
       ),
       el(
         'div',
-        { class: 'row row--between', style: { marginTop: '10px' } },
+        { class: 'row row--between row--spaced' },
         el('a', { class: 'text-btn', href: 'Card_Reference.zip', download: 'Card_Reference.zip' }, t('art.downloadRef')),
         el('button', { class: 'text-btn', type: 'button', onclick: () => void cb.onResetDefaults() }, t('art.resetDefault')),
       ),
@@ -176,8 +177,8 @@ function renderArtworkTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
       ),
       el(
         'div',
-        { class: 'row row--between', style: { marginTop: '10px' } },
-        el('span', { class: 'list-item__meta' }, `${p.holo.layers.length} holo layer • ${p.holo.interaction.mode}`),
+        { class: 'row row--between row--spaced' },
+        el('span', { class: 'list-item__meta' }, `${p.holo.layers.length} holo · ${p.holo.interaction.mode}`),
         el('button', {
           class: 'text-btn',
           type: 'button',
@@ -294,7 +295,7 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
       'div',
       { class: 'ps-head' },
       el('strong', {}, `${t('holo.stackTitle')} (${hLayers.length})`),
-      ui.soloHoloLayerId ? el('span', { style: { color: 'var(--warn)', fontSize: '11px' } }, 'SOLO') : null,
+      ui.soloHoloLayerId ? el('span', { class: 'solo-tag' }, 'Solo') : null,
     ),
   );
 
@@ -370,7 +371,7 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
           if (ui.soloHoloLayerId) store.setUI({ soloHoloLayerId: null });
           store.update((d) => { const x = d.holo.layers.find((i) => i.id === l.id); if (x) x.visible = !x.visible; });
         },
-      }, isVis ? '👁' : '◌'),
+      }, icon(isVis ? 'eye' : 'eye-off', 14)),
       el(
         'div',
         { class: 'ps-layer__thumbs' },
@@ -379,14 +380,14 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
           style: { background: 'linear-gradient(135deg,#f80e35,#eedf10,#21e985,#0dbde9,#c929f1)' },
           title: stObj?.label ?? l.styleId,
         }),
-        l.masks.length > 0 ? el('span', { class: 'ps-layer__link' }, '🔗') : null,
+        l.masks.length > 0 ? el('span', { class: 'ps-layer__link' }, icon('link', 12)) : null,
         l.masks.length > 0 ? el('img', { class: 'ps-layer__mask', src: maskThumb ?? '', alt: '' }) : null,
       ),
       el(
         'div',
         { class: 'ps-layer__info' },
         nameEl,
-        el('span', { class: 'ps-layer__sub' }, `${stObj?.label ?? l.styleId} • ${l.masks.length}M${l.masking.invert ? ' (Inv)' : ''}`),
+        el('span', { class: 'ps-layer__sub' }, `${stObj?.label ?? l.styleId} · ${l.masks.length}M${l.masking.invert ? ' (Inv)' : ''}`),
       ),
       el(
         'div',
@@ -407,7 +408,7 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
             e.stopPropagation();
             store.update((d) => { const x = d.holo.layers.find((i) => i.id === l.id); if (x) x.locked = !x.locked; });
           },
-        }, l.locked ? '🔒' : '🔓'),
+        }, icon(l.locked ? 'lock' : 'unlock', 14)),
       ),
     );
     stack.append(row);
@@ -419,20 +420,21 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
     { class: 'ps-foot' },
     el(
       'div',
-      { style: { display: 'flex', gap: '2px' } },
-      el('button', { type: 'button', disabled: !selected, title: t('layers.dup'), onclick: () => { if (selected) duplicateHolo(selected); } }, '⧉'),
-      el('button', { type: 'button', disabled: !selected, onclick: () => { if (selIdx >= 0) moveHolo(selIdx, 1); } }, '↑'),
-      el('button', { type: 'button', disabled: !selected, onclick: () => { if (selIdx >= 0) moveHolo(selIdx, -1); } }, '↓'),
+      { class: 'ps-foot__group' },
+      el('button', { type: 'button', disabled: !selected, title: t('layers.dup'), onclick: () => { if (selected) duplicateHolo(selected); } }, icon('copy', 14)),
+      el('button', { type: 'button', disabled: !selected, title: 'Move up', onclick: () => { if (selIdx >= 0) moveHolo(selIdx, 1); } }, icon('arrow-up', 14)),
+      el('button', { type: 'button', disabled: !selected, title: 'Move down', onclick: () => { if (selIdx >= 0) moveHolo(selIdx, -1); } }, icon('arrow-down', 14)),
     ),
     el('button', {
       type: 'button',
+      class: 'ps-foot__del',
       disabled: !selected || selected.locked || hLayers.length <= 1,
       title: t('layers.del'),
       onclick: () => {
         if (!selected || selected.locked || hLayers.length <= 1) return;
         store.update((d) => { d.holo.layers = d.holo.layers.filter((i) => i.id !== selected.id); });
       },
-    }, `🗑 ${t('layers.del')}`),
+    }, icon('trash', 14), t('layers.del')),
   );
   stackSec.append(stack, foot);
   root.append(stackSec);
@@ -631,12 +633,12 @@ function renderHoloTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCall
               ...p.masks.map((m) => el('option', { value: m.id, selected: m.id === ref.maskId }, m.name)),
             ),
             el('button', {
-              class: 'icon-btn',
+              class: 'icon-btn mask-ref-del',
               type: 'button',
               disabled: l.locked,
-              style: { padding: '0', height: '27px' },
+              title: t('layers.del'),
               onclick: () => mutL((x) => { x.masks.splice(idx, 1); }),
-            }, '×'),
+            }, icon('close', 14)),
           ),
         );
       });
@@ -800,7 +802,7 @@ function renderLayersTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCa
       'div',
       { class: 'ps-head' },
       el('strong', {}, `${t('layers.stackTitle')} (${sideLayers.length})`),
-      ui.soloLayerId ? el('span', { style: { color: 'var(--warn)', fontSize: '11px' } }, 'SOLO') : null,
+      ui.soloLayerId ? el('span', { class: 'solo-tag' }, 'Solo') : null,
     ),
   );
 
@@ -884,19 +886,19 @@ function renderLayersTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCa
             if (ui.soloLayerId) store.setUI({ soloLayerId: null });
             store.update((d) => { const x = d.layers.find((i) => i.id === l.id); if (x) x.visible = !x.visible; });
           },
-        }, isVisEffective ? '👁' : '◌'),
+        }, icon(isVisEffective ? 'eye' : 'eye-off', 14)),
         el(
           'div',
           { class: 'ps-layer__thumbs' },
           el('div', { class: 'ps-layer__swatch', style: { background: def.view }, title: def.spot(l) }),
-          l.masks.length > 0 ? el('span', { class: 'ps-layer__link' }, '🔗') : null,
+          l.masks.length > 0 ? el('span', { class: 'ps-layer__link' }, icon('link', 12)) : null,
           l.masks.length > 0 ? el('img', { class: 'ps-layer__mask', src: maskThumb ?? '', alt: '' }) : null,
         ),
         el(
           'div',
           { class: 'ps-layer__info' },
           nameEl,
-          el('span', { class: 'ps-layer__sub' }, `${def.spot(l)} • ${Math.round(l.opacity * 100)}% • ${l.masks.length}M`),
+          el('span', { class: 'ps-layer__sub' }, `${def.spot(l)} · ${Math.round(l.opacity * 100)}% · ${l.masks.length}M`),
         ),
         el(
           'div',
@@ -917,47 +919,50 @@ function renderLayersTab(root: HTMLElement, p: Project, ui: UIState, cb: PanelCa
               e.stopPropagation();
               store.update((d) => { const x = d.layers.find((i) => i.id === l.id); if (x) x.locked = !x.locked; });
             },
-          }, l.locked ? '🔒' : '🔓'),
+          }, icon(l.locked ? 'lock' : 'unlock', 14)),
         ),
       );
       stack.append(row);
     });
   }
 
-  // Photoshop-style bottom bar
+  // Layer stack bottom bar
   const selIdx = selected ? p.layers.findIndex((x) => x.id === selected.id) : -1;
   const foot = el(
     'div',
     { class: 'ps-foot' },
     el(
       'div',
-      { style: { display: 'flex', gap: '2px' } },
+      { class: 'ps-foot__group' },
       el('button', {
         type: 'button',
         disabled: !selected,
         title: t('layers.dup'),
         onclick: () => { if (selected) duplicateLayer(selected); },
-      }, '⧉'),
+      }, icon('copy', 14)),
       el('button', {
         type: 'button',
         disabled: !selected,
+        title: 'Move up',
         onclick: () => { if (selIdx >= 0) moveLayer(selIdx, 1); },
-      }, '↑'),
+      }, icon('arrow-up', 14)),
       el('button', {
         type: 'button',
         disabled: !selected,
+        title: 'Move down',
         onclick: () => { if (selIdx >= 0) moveLayer(selIdx, -1); },
-      }, '↓'),
+      }, icon('arrow-down', 14)),
     ),
     el('button', {
       type: 'button',
+      class: 'ps-foot__del',
       disabled: !selected || selected.locked,
       title: t('layers.del'),
       onclick: () => {
         if (!selected || selected.locked) return;
         store.update((d) => { d.layers = d.layers.filter((i) => i.id !== selected.id); });
       },
-    }, `🗑 ${t('layers.del')}`),
+    }, icon('trash', 14), t('layers.del')),
   );
 
   stackSec.append(stack, foot);
@@ -1111,12 +1116,12 @@ function renderLayerInspector(root: HTMLElement, p: Project, l: Layer, ui: UISta
             ...p.masks.map((m) => el('option', { value: m.id, selected: m.id === ref.maskId }, m.name)),
           ),
           el('button', {
-            class: 'icon-btn',
+            class: 'icon-btn mask-ref-del',
             type: 'button',
             disabled: l.locked,
-            style: { padding: '0', height: '32px' },
+            title: t('layers.del'),
             onclick: () => mut((x) => { x.masks.splice(idx, 1); }),
-          }, '×'),
+          }, icon('close', 14)),
         ),
       );
     });
@@ -1487,7 +1492,12 @@ function renderPreflightTab(root: HTMLElement, cb: PanelCallbacks) {
               }
             },
           },
-          el('div', { class: 'issue__title' }, `${it.severity === 'error' ? '❌' : it.severity === 'warn' ? '⚠️' : '✅'} ${it.title}`),
+          el(
+            'div',
+            { class: 'issue__title' },
+            icon(it.severity === 'error' ? 'x-circle' : it.severity === 'warn' ? 'alert-triangle' : 'check-circle', 14),
+            el('span', {}, it.title),
+          ),
           el('div', { class: 'issue__detail' }, it.detail),
         ),
       ),
@@ -1528,6 +1538,7 @@ function renderExportTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
       chk('holoPattern', t('exp.holo')),
       chk('dieline', t('exp.dieline')),
       chk('mockup', t('exp.mockup')),
+      chk('video', t('exp.video')),
       chk('specSheet', t('exp.spec')),
       el(
         'button',
@@ -1551,12 +1562,24 @@ function renderExportTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
         },
         t('exp.videoBtn'),
       ),
-      st.busy || st.pct > 0
+      st.busy || st.pct > 0 || st.label
         ? el(
             'div',
-            {},
-            el('div', { class: 'progress' }, el('div', { class: 'progress__bar', style: { width: `${st.pct}%` } })),
-            el('div', { class: 'list-item__meta' }, st.label),
+            { class: 'export-progress' },
+            el('div', { class: 'progress' }, el('div', { class: 'progress__bar', style: { transform: `scaleX(${Math.max(0, Math.min(100, st.pct)) / 100})` } })),
+            el('div', { class: 'list-item__meta', style: st.label.startsWith('Error:') ? { color: 'var(--err)' } : {} }, st.label),
+            st.downloadUrl && st.downloadName && !st.busy
+              ? el(
+                  'a',
+                  {
+                    class: 'btn btn--full export-dl',
+                    href: st.downloadUrl,
+                    download: st.downloadName,
+                  },
+                  icon('download', 14),
+                  `${st.downloadName}${st.downloadSize ? ` (${(st.downloadSize / 1048576).toFixed(1)} MB)` : ''}`,
+                )
+              : null,
           )
         : null,
     ),
@@ -1635,7 +1658,7 @@ function renderEnvTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
         el(
           'button',
           {
-            class: 'link-btn',
+            class: 'text-btn',
             type: 'button',
             onclick: () => mut((e) => Object.assign(e, defaultEnvConfig())),
           },
@@ -1657,12 +1680,12 @@ function renderEnvTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
             el(
               'div',
               { class: 'row row--between' },
-              el('span', { class: 'hint' }, t('env.customActive')),
+              el('span', { class: 'field__hint' }, t('env.customActive')),
               el(
                 'button',
                 {
                   type: 'button',
-                  class: 'link-btn',
+                  class: 'text-btn',
                   onclick: () => mut((e) => (e.customAssetId = null)),
                 },
                 t('env.clearCustom'),
@@ -1672,10 +1695,10 @@ function renderEnvTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
         : null,
       el(
         'button',
-        { type: 'button', class: 'btn btn--ghost', style: { width: '100%' }, onclick: () => envInput.click() },
+        { type: 'button', class: 'btn btn--ghost btn--full', onclick: () => envInput.click() },
         t('env.uploadBtn'),
       ),
-      el('p', { class: 'hint', style: { marginTop: '6px' } }, t('env.customHint')),
+      el('p', { class: 'field__hint' }, t('env.customHint')),
     ),
     el(
       'section',
@@ -1728,7 +1751,7 @@ function renderEnvTab(root: HTMLElement, p: Project, cb: PanelCallbacks) {
       el('h2', { class: 'sec__title' }, t('env.backdropTitle')),
       el(
         'label',
-        { class: 'check-line' },
+        { class: 'row check-row' },
         el('input', {
           type: 'checkbox',
           checked: env.showBackdrop,
@@ -1823,7 +1846,7 @@ function rangeField(o: RangeOpts) {
       resetBtn.classList.add('is-default');
       o.onChange(o.def, false);
     },
-  }, '↺');
+  }, icon('reset', 12));
 
   const rangeInput = el('input', {
     type: 'range',

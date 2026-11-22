@@ -22,11 +22,18 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-export function triggerDownload(blob: Blob, filename: string) {
+export function triggerDownload(blob: Blob, filename: string, keepUrl = false): string {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  setTimeout(() => {
+    a.remove();
+    if (!keepUrl) URL.revokeObjectURL(url);
+  }, keepUrl ? 100 : 60000);
+  return url;
 }

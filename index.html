@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FramigosX Holo Studio — TCG Pre-press</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23001e36'/%3E%3Crect x='1.5' y='1.5' width='29' height='29' rx='4' fill='none' stroke='%2331a8ff' stroke-width='2'/%3E%3Ctext x='16' y='21.5' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='15' fill='%2331a8ff'%3EFx%3C/text%3E%3C/svg%3E">
+  <title>FX Studio by @stoopiducky</title>
+  <link rel="icon" type="image/png" href="favicon.png">
 
   <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/base.css">
   <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/cards.css">
@@ -32,12 +32,12 @@
   <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/swsh-pikachu.css">
 
   <meta id="engine-anchor">
-  <meta name="theme-color" content="#262626" id="theme-color">
+  <meta name="theme-color" content="#19191b" id="theme-color">
   <script>
     (function () {
       var dark = !window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.dataset.scheme = dark ? 'dark' : 'light';
-      document.getElementById('theme-color').content = dark ? '#262626' : '#e0e0e0';
+      document.getElementById('theme-color').content = dark ? '#19191b' : '#fafafa';
     })();
   </script>
 </head>
@@ -45,11 +45,12 @@
   <div class="veil" id="veil"></div>
 
   <div class="studio">
-    <!-- Photoshop Options / Application Bar -->
     <header class="topbar">
       <div class="topbar__brand">
-        <span class="ps-badge" title="FramigosX Holo Studio">Fx</span>
-        <input id="project-name" class="project-input" type="text" value="FramigosX Card" aria-label="Tên dự án">
+        <span class="ps-badge" title="FX Studio by @stoopiducky">
+          <img src="logo.png" alt="FX Studio by @stoopiducky">
+        </span>
+        <input id="project-name" class="project-input" type="text" value="FX Card" aria-label="Tên dự án">
       </div>
 
       <div class="topbar__center">
@@ -59,63 +60,77 @@
         </div>
         <div class="seg" role="group" aria-label="Chế độ xem">
           <button type="button" data-view="holo" aria-pressed="true">3D Holo</button>
-          <button type="button" data-view="flat" aria-pressed="false">Flat Tách bản</button>
+          <button type="button" data-view="flat" aria-pressed="false">Tách bản 2D</button>
         </div>
-        <label class="chip-check"><input type="checkbox" id="toggle-guides"><span>Guides</span></label>
-        <label class="chip-check"><input type="checkbox" id="toggle-auto" checked><span>Auto xoay</span></label>
-        <select id="quick-hdri" class="quick-hdri" title="HDRI Environment"></select>
+        <label class="chip-check"><input type="checkbox" id="toggle-guides"><span>Lưới cắt</span></label>
+        <label class="chip-check"><input type="checkbox" id="toggle-auto" checked><span>Tự xoay</span></label>
+        <select id="quick-hdri" class="quick-hdri" title="Môi trường ánh sáng HDRI"></select>
       </div>
 
       <div class="topbar__right">
-        <button type="button" class="icon-btn" id="btn-undo" title="Hoàn tác (⌘Z)" disabled>↶</button>
-        <button type="button" class="icon-btn" id="btn-redo" title="Làm lại (⇧⌘Z)" disabled>↷</button>
-        <button type="button" class="small-btn" id="btn-new-proj" title="Tạo dự án mới">+ Mới</button>
-        <button type="button" class="small-btn" id="btn-open-proj" title="Import file .fxholo vào tab mới">Import</button>
-        <button type="button" class="small-btn" id="btn-save-proj" title="Lưu dự án (.fxholo)">Lưu</button>
+        <div class="topbar__group">
+          <button type="button" class="icon-btn" id="btn-undo" title="Hoàn tác (⌘Z)" aria-label="Hoàn tác" disabled>
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 1 1 0 7H7"/><path d="M6 4 3.5 6.5 6 9"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-redo" title="Làm lại (⇧⌘Z)" aria-label="Làm lại" disabled>
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 6.5h-6a3.5 3.5 0 1 0 0 7H9"/><path d="M10 4 12.5 6.5 10 9"/></svg>
+          </button>
+        </div>
+        <button type="button" class="small-btn" id="btn-new-proj" title="Tạo dự án mới">Mới</button>
+        <button type="button" class="small-btn" id="btn-open-proj" title="Mở file .fxholo vào tab mới">Mở</button>
+        <button type="button" class="small-btn small-btn--primary" id="btn-save-proj" title="Lưu dự án (.fxholo)">Lưu</button>
         <input type="file" id="input-open-proj" accept=".fxholo,.zip" hidden>
-        <div class="seg" role="group" aria-label="Language">
+        <div class="seg" role="group" aria-label="Ngôn ngữ">
           <button type="button" data-lang="vi" aria-pressed="true">VI</button>
           <button type="button" data-lang="en" aria-pressed="false">EN</button>
         </div>
         <div class="theme" role="group" aria-label="Giao diện">
-          <button type="button" data-theme="light" aria-label="Sáng" aria-pressed="false">☀</button>
-          <button type="button" data-theme="dark" aria-label="Tối" aria-pressed="false">☾</button>
-          <button type="button" data-theme="system" aria-pressed="true">Sys</button>
+          <button type="button" data-theme="light" aria-label="Sáng" title="Sáng" aria-pressed="false">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"/></svg>
+          </button>
+          <button type="button" data-theme="dark" aria-label="Tối" title="Tối" aria-pressed="false">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.6A5.5 5.5 0 0 1 6.4 2.5a5.5 5.5 0 1 0 7.1 7.1Z"/></svg>
+          </button>
+          <button type="button" data-theme="system" aria-label="Hệ thống" title="Theo hệ thống" aria-pressed="true">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M5.5 13.5h5M8 11v2.5"/></svg>
+          </button>
         </div>
       </div>
     </header>
 
     <div class="workspace">
-      <!-- Photoshop Left Vertical Toolbar -->
-      <nav class="ps-toolbar" aria-label="Tools">
-        <button type="button" class="ps-tool is-active" data-tool="tilt" title="Tilt / Select (V)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 2.5l9.5 6.8-4.3.9-2.2 4.3z"/></svg>
+      <nav class="ps-toolbar" aria-label="Công cụ">
+        <button type="button" class="ps-tool is-active" data-tool="tilt" title="Nghiêng / Chọn (V)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5 12.5 8.8l-4 .8-2 3.9z"/></svg>
         </button>
-        <button type="button" class="ps-tool" data-tool="hand" title="Hand / Pan Tool (H)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5V4.5a1 1 0 012 0V8m0-4.5a1 1 0 012 0V8m0-3.5a1 1 0 012 0v4.8c0 2.8-1.8 4.7-4.4 4.7-2 0-3.5-1.2-4.3-3l-1.2-2.6a1 1 0 011.7-1l1.2 1.8"/></svg>
+        <button type="button" class="ps-tool" data-tool="hand" title="Di chuyển khung nhìn (H)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8.5V4a1 1 0 0 1 2 0v3.2m0-4.2a1 1 0 0 1 2 0v4.2m0-3.2a1 1 0 0 1 2 0v4.5c0 2.6-1.6 4.5-4.1 4.5-1.9 0-3.3-1.1-4.1-2.8L2.2 7.8a1 1 0 0 1 1.6-1l1.7 1.7"/></svg>
         </button>
-        <button type="button" class="ps-tool" data-tool="zoom" title="Zoom Tool (Z — Click: +, Alt+Click: −)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="4.8"/><path d="M11.6 11.6L15.5 15.5" stroke-linecap="round"/></svg>
+        <button type="button" class="ps-tool" data-tool="zoom" title="Phóng to / Thu nhỏ (Z)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
         </button>
         <span class="ps-tool-sep"></span>
-        <button type="button" class="ps-tool" id="tool-flip" title="Flip Front / Back (F)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h10l-2.5-2.5M15 12H5l2.5 2.5"/></svg>
+        <button type="button" class="ps-tool" id="tool-flip" title="Lật mặt thẻ (F)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h10L10 3M13.5 10.5h-10L6 13"/></svg>
         </button>
-        <button type="button" class="ps-tool" id="tool-guides" title="Toggle Guides (G)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="3" width="12" height="12" stroke-dasharray="2 2"/><path d="M9 2v14M2 9h14" opacity=".45"/></svg>
+        <button type="button" class="ps-tool" id="tool-guides" title="Bật / tắt lưới cắt (G)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2 2"/><path d="M8 2v12M2 8h12" opacity=".45"/></svg>
         </button>
-        <button type="button" class="ps-tool" id="tool-fit" title="Reset View 100% (0)">
-          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 6.5V3h3.5M15 6.5V3h-3.5M3 11.5V15h3.5M15 11.5V15h-3.5"/></svg>
+        <button type="button" class="ps-tool" id="tool-fit" title="Đặt lại khung nhìn 100% (0)">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10"/></svg>
         </button>
       </nav>
 
-      <!-- Center Document Canvas Area -->
       <div class="canvas-col">
         <div class="doc-tabbar">
-          <div class="doc-tabs" id="doc-tabs" role="tablist" aria-label="Projects"></div>
+          <div class="doc-tabs" id="doc-tabs" role="tablist" aria-label="Danh sách dự án"></div>
           <div class="doc-tab-actions">
-            <button type="button" id="doc-tab-new" title="Tạo dự án mới">+</button>
-            <button type="button" id="doc-tab-dup" title="Nhân bản dự án hiện tại">⧉</button>
+            <button type="button" id="doc-tab-new" title="Tạo dự án mới" aria-label="Tạo dự án mới">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+            </button>
+            <button type="button" id="doc-tab-dup" title="Nhân bản dự án hiện tại" aria-label="Nhân bản dự án hiện tại">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5H3A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5"/></svg>
+            </button>
           </div>
         </div>
 
@@ -135,19 +150,17 @@
           </div>
         </section>
 
-        <!-- Photoshop Bottom Status Bar -->
         <footer class="ps-statusbar">
           <div class="viewport-hud" id="viewport-hud">
-            <button type="button" id="zoom-out" title="Zoom out (−)">−</button>
-            <button type="button" id="zoom-reset" title="Reset 100% (0)">100%</button>
-            <button type="button" id="zoom-in" title="Zoom in (+)">+</button>
-            <span class="viewport-hud__hint" id="hud-hint">Cuộn: Zoom • Space+Kéo / Chuột giữa: Pan</span>
+            <button type="button" id="zoom-out" title="Thu nhỏ (−)" aria-label="Thu nhỏ">−</button>
+            <button type="button" id="zoom-reset" title="Đặt lại 100% (0)">100%</button>
+            <button type="button" id="zoom-in" title="Phóng to (+)" aria-label="Phóng to">+</button>
+            <span class="viewport-hud__hint" id="hud-hint"><kbd>Scroll</kbd> Zoom <span class="hud-sep">·</span> <kbd>Space</kbd> + Kéo Pan</span>
           </div>
           <div class="stage-status" id="stage-status"></div>
         </footer>
       </div>
 
-      <!-- Right Docked Photoshop Panels -->
       <aside class="sidebar">
         <nav class="tabs" role="tablist">
           <button type="button" role="tab" data-tab="artwork" aria-selected="true">Artwork</button>
@@ -163,8 +176,8 @@
         <div class="panel-body" id="panel-body"></div>
 
         <footer class="credit">
-          <p class="credit__internal">FramigosX Internal Pre-press Studio</p>
-          <p>Holo CSS: <a href="https://github.com/simeydotme/pokemon-cards-css" target="_blank" rel="noopener">simeydotme</a> • Base: <a href="https://github.com/fyk0620/ribi-holo" target="_blank" rel="noopener">ribi-holo</a> (GPL-3.0)</p>
+          <p class="credit__internal">FX Studio by @stoopiducky</p>
+          <p>Holo CSS: <a href="https://github.com/simeydotme/pokemon-cards-css" target="_blank" rel="noopener">simeydotme</a> · Base: <a href="https://github.com/fyk0620/ribi-holo" target="_blank" rel="noopener">ribi-holo</a> (GPL-3.0)</p>
         </footer>
       </aside>
     </div>

@@ -26,6 +26,7 @@ import { imaging } from '../imaging/client';
 import { TECHS } from '../model/techniques';
 import { assets } from '../model/assets';
 import { ENGINES, STYLES } from '../card/styles';
+import { presetUsesBuiltInTextureWhenMasked } from './holoComposite';
 import type { PreflightIssue } from '../preflight/preflight';
 
 export interface ExportOptions {
@@ -34,6 +35,7 @@ export interface ExportOptions {
   holoPattern: boolean;
   dieline: boolean;
   mockup: boolean;
+  video?: boolean;
   specSheet: boolean;
   preflight?: PreflightIssue[];
   mockupBlob?: Blob | null;
@@ -176,7 +178,7 @@ function buildDielineSvg(specs: Specs): string {
   const r = specs.cornerMm;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${doc.w}mm" height="${doc.h}mm" viewBox="0 0 ${doc.w} ${doc.h}">
-  <title>FramigosX Die-line (${specs.widthMm}x${specs.heightMm}mm)</title>
+  <title>FX Studio by @stoopiducky Die-line (${specs.widthMm}x${specs.heightMm}mm)</title>
   <g id="BleedBox" fill="none" stroke="#0066ff" stroke-width="0.2" stroke-dasharray="1.5 1">
     <rect x="0" y="0" width="${doc.w}" height="${doc.h}" />
   </g>
@@ -203,7 +205,7 @@ async function buildSpecSheetPdf(p: Project, preflight: PreflightIssue[], attach
     y -= size + 6;
   };
 
-  line('FRAMIGOSX HOLO STUDIO — PRODUCTION JOB TICKET', 14, true);
+  line('FX STUDIO BY @STOOPIDUCKY — PRODUCTION JOB TICKET', 14, true);
   line(`Project: ${p.name}    Date: ${new Date().toISOString().slice(0, 10)}`, 9, false, rgb(0.4, 0.42, 0.45));
   y -= 8;
   page.drawLine({ start: { x: 48, y }, end: { x: 547, y }, thickness: 0.75, color: rgb(0.75, 0.77, 0.75) });
@@ -352,10 +354,11 @@ export async function exportProductionZip(p: Project, opt: ExportOptions): Promi
       exportedHoloPlatePaths.push(maskPath);
     }
 
-    // Fetch preset primary pattern texture blob
+    // Fetch preset primary pattern texture blob only when CSS actually renders it for this masked/unmasked state
     const presetStyle = STYLES.find((x) => x.id === hl.styleId);
     let primaryPresetBlob: Blob | null = null;
-    if (presetStyle?.patterns[0]) {
+    const shouldUsePresetTexture = !useMask || presetUsesBuiltInTextureWhenMasked(hl.styleId);
+    if (shouldUsePresetTexture && presetStyle?.patterns[0]) {
       try {
         const r = await fetch(presetStyle.patterns[0]);
         if (r.ok) primaryPresetBlob = await r.blob();
@@ -463,7 +466,7 @@ export async function exportProductionZip(p: Project, opt: ExportOptions): Promi
     tick('Đang tạo print_ready.pdf (TrimBox, BleedBox, Spot Colors)...');
     const pdf = await PDFDocument.create();
     pdf.setTitle(`${p.name} — Print Ready`);
-    pdf.setCreator('FramigosX Holo Studio');
+    pdf.setCreator('FX Studio by @stoopiducky');
     const font = await pdf.embedFont(StandardFonts.Helvetica);
 
     const docMm = docSizeMm(specs);
@@ -558,7 +561,7 @@ export async function exportProductionZip(p: Project, opt: ExportOptions): Promi
         drawObject(xName),
         popGraphicsState(),
       );
-      drawMarksAndSlug(page, font, specs, p.name, `PLATE ${pl.side.toUpperCase()} — ${pl.spot}`);
+      drawMarksAndSlug(page, font, specs, p.name, `PLATE ${pl.side.toUpperCase()} - ${pl.spot}`);
     }
 
     tick('Đang nén print_ready.pdf...');
@@ -572,13 +575,13 @@ export async function exportProductionZip(p: Project, opt: ExportOptions): Promi
   if (opt.mockup && opt.mockupBlob) {
     files['preview_mockup.png'] = new Uint8Array(await opt.mockupBlob.arrayBuffer());
   }
-  if (opt.mockup && opt.mockupVideo) {
+  if (opt.video && opt.mockupVideo) {
     files[`preview_mockup_3d_1080p.${opt.mockupVideo.ext}`] = new Uint8Array(await opt.mockupVideo.blob.arrayBuffer());
   }
 
   // 6. Spec JSON + Spec Sheet PDF (always English)
   const specJson = {
-    generator: 'FramigosX Holo Studio 2.0',
+    generator: 'FX Studio by @stoopiducky',
     exportedAt: new Date().toISOString(),
     project: p.name,
     specs: p.specs,

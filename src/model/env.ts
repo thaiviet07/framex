@@ -18,10 +18,10 @@ export interface EnvPreset {
 export const ENV_PRESETS: EnvPreset[] = [
   {
     id: 'studio-neutral',
-    labelVi: 'Studio Chuẩn (Neutral)',
-    labelEn: 'Neutral Studio',
-    descVi: 'Softbox trắng cân bằng 5500K, ánh sáng đều chuẩn studio.',
-    descEn: 'Balanced 5500K white softboxes for clean studio inspection.',
+    labelVi: 'Studio chuẩn',
+    labelEn: 'Neutral studio',
+    descVi: 'Softbox 5500K cân bằng để kiểm tra tổng thể',
+    descEn: 'Balanced 5500K white softboxes for neutral inspection',
     preview: 'linear-gradient(135deg, #2a2d32 0%, #6c727a 48%, #e8ecf0 55%, #1d2024 100%)',
     sky: ['#26292e', '#1a1c20', '#121316'],
     lights: [
@@ -32,10 +32,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'print-d50',
-    labelVi: 'Buồng soi in D50 (ISO)',
-    labelEn: 'Print Booth D50 (ISO)',
-    descVi: 'Ánh sáng chuẩn 5000K phòng kiểm màu nhà in.',
-    descEn: 'ISO 3664 5000K viewing booth for color & foil QC.',
+    labelVi: 'Buồng soi D50',
+    labelEn: 'Print booth D50',
+    descVi: 'Ánh sáng chuẩn ISO 3664 5000K phòng kiểm màu',
+    descEn: 'ISO 3664 5000K viewing booth for color and foil QC',
     preview: 'linear-gradient(135deg, #525456 0%, #c8c6be 50%, #f5f2e8 60%, #444648 100%)',
     sky: ['#5c5d5e', '#47484a', '#353638'],
     lights: [
@@ -46,10 +46,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'warm-gallery',
-    labelVi: 'Gallery Vàng Ấm',
-    labelEn: 'Warm Gallery',
-    descVi: 'Đèn spotlight ấm 3200K — tôn cực mạnh Hot Foil Vàng & Emboss.',
-    descEn: '3200K museum spotlights that accentuate Gold Foil & Emboss.',
+    labelVi: 'Gallery ấm',
+    labelEn: 'Warm gallery',
+    descVi: 'Đèn 3200K tôn hot foil vàng và emboss',
+    descEn: '3200K spotlights tuned for gold foil and emboss relief',
     preview: 'linear-gradient(135deg, #241810 0%, #8f5624 45%, #ffd996 58%, #1a120d 100%)',
     sky: ['#2c1d13', '#1d140e', '#110c08'],
     lights: [
@@ -61,10 +61,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'cool-daylight',
-    labelVi: 'Showroom Ánh Sáng Trời',
-    labelEn: 'Cool Daylight Showroom',
-    descVi: 'Ánh sáng 6500K trong trẻo — soi sắc nét Silver Foil & Spot UV.',
-    descEn: 'Crisp 6500K daylight ideal for Silver Foil & Spot UV.',
+    labelVi: 'Ánh sáng trời',
+    labelEn: 'Cool daylight',
+    descVi: 'Ánh sáng 6500K làm rõ silver foil và spot UV',
+    descEn: 'Crisp 6500K daylight for silver foil and spot UV',
     preview: 'linear-gradient(135deg, #1a2736 0%, #5c8ab5 46%, #d9f0ff 56%, #18212b 100%)',
     sky: ['#2a3f57', '#1e2c3b', '#141b24'],
     lights: [
@@ -76,10 +76,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'neon-arena',
-    labelVi: 'Esports Neon Arena',
-    labelEn: 'Esports Neon Arena',
-    descVi: 'Đèn rim Cyan + Magenta kiểu sân khấu esports / sự kiện.',
-    descEn: 'Dual-tone Cyan & Magenta arena rim lighting for live event vibe.',
+    labelVi: 'Đèn sân khấu',
+    labelEn: 'Stage rim',
+    descVi: 'Đèn viền cyan và magenta độ tương phản cao',
+    descEn: 'Dual-tone cyan and magenta rim lighting',
     preview: 'linear-gradient(135deg, #0b1628 0%, #00d2ff 36%, #ff2e93 66%, #14081f 100%)',
     sky: ['#11162a', '#160d24', '#090912'],
     lights: [
@@ -90,10 +90,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'sunset-gold',
-    labelVi: 'Hoàng Hôn (Golden Hour)',
-    labelEn: 'Golden Sunset',
-    descVi: 'Ánh cam rực + bóng chàm sâu đầy chiều sâu.',
-    descEn: 'Warm amber horizon light with deep indigo ambient shadows.',
+    labelVi: 'Hoàng hôn',
+    labelEn: 'Golden sunset',
+    descVi: 'Ánh cam hổ phách kết hợp bóng chàm sâu',
+    descEn: 'Warm amber horizon light with deep indigo shadows',
     preview: 'linear-gradient(135deg, #1b1636 0%, #9c3d46 42%, #ff9d42 62%, #1a1224 100%)',
     sky: ['#261d4a', '#7c3448', '#1c1426'],
     lights: [
@@ -104,10 +104,10 @@ export const ENV_PRESETS: EnvPreset[] = [
   },
   {
     id: 'darkroom-rim',
-    labelVi: 'Phòng Tối High-Contrast',
-    labelEn: 'Darkroom High-Contrast',
-    descVi: 'Nền đen tuyền + dải sáng gắt để soi rõ Spot UV & Emboss.',
-    descEn: 'Pitch-black studio with sharp strip lights for UV & Emboss bevels.',
+    labelVi: 'Phòng tối',
+    labelEn: 'Darkroom rim',
+    descVi: 'Dải sáng sắc soi gờ spot UV và emboss',
+    descEn: 'Dark studio with sharp strip lights for UV and emboss bevels',
     preview: 'linear-gradient(135deg, #050506 0%, #141417 44%, #ffffff 50%, #050506 58%)',
     sky: ['#08080a', '#050507', '#020203'],
     lights: [

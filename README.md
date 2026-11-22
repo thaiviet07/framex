@@ -1,6 +1,6 @@
-# FramigosX Holo Studio 2.0 — TCG Pre-press
+# FX Studio by @stoopiducky — TCG Pre-press
 
-Công cụ thiết kế, mô phỏng 3D và chuẩn bị file in (pre-press) cho thẻ TCG/Sports dành cho nội bộ **FramigosX**, chạy 100% client-side (không gửi ảnh ra ngoài).
+Công cụ thiết kế, mô phỏng 3D và chuẩn bị file in (pre-press) cho thẻ TCG/Sports — **FX Studio by @stoopiducky**, chạy 100% client-side (không gửi ảnh ra ngoài).
 
 ## Tính năng chính
 - **Kiến trúc Vite + TypeScript + Web Worker + WebGL**:

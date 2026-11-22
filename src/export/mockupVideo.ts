@@ -2,7 +2,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import type { Frame, HoloLayer, Project, Side } from '../model/types';
 import type { TechRenderer } from '../render/TechRenderer';
 import type { CardState } from '../card/HoloCard';
-import { STYLES } from '../card/styles';
+import { compositeHoloLayers, prepareExportHoloLayers } from './holoComposite';
 
 export interface VideoHoloLayer {
   layer: HoloLayer;
@@ -104,25 +104,6 @@ function makeArtCanvas(art: { data: Uint8ClampedArray; w: number; h: number } | 
   return out;
 }
 
-function makeMaskCanvas(mask: { data: Uint8Array; w: number; h: number } | null, frame: Frame, tw: number, th: number): HTMLCanvasElement | null {
-  if (!mask) return null;
-  const tmp = document.createElement('canvas');
-  tmp.width = mask.w;
-  tmp.height = mask.h;
-  const tctx = tmp.getContext('2d')!;
-  const img = tctx.createImageData(mask.w, mask.h);
-  for (let i = 0; i < mask.data.length; i++) {
-    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255;
-    img.data[i * 4 + 3] = mask.data[i];
-  }
-  tctx.putImageData(img, 0, 0);
-  const out = document.createElement('canvas');
-  out.width = tw;
-  out.height = th;
-  out.getContext('2d')!.drawImage(tmp, frame.trim.x, frame.trim.y, frame.trim.w, frame.trim.h, 0, 0, tw, th);
-  return out;
-}
-
 /**
  * Clean, smooth natural orbit tilt (matching the 3D preview's auto-rotation).
  */
@@ -214,43 +195,8 @@ export async function generateMockupMp4(inp: MockupVideoInput): Promise<{ blob: 
   crCtx.stroke();
   const crossPat = hCtx.createPattern(crossTile, 'repeat');
 
-  // Pre-build per-Holo-layer mask canvases, scanline patterns & preset textures
-  const preparedHolos = await Promise.all(
-    (p.holo.enabled ? holoLayers : []).map(async (item) => {
-      const hl = item.layer;
-      const stObj = STYLES.find((s) => s.id === hl.styleId);
-      const isVertical = /regular-holo|tg-holo|reverse-holo|v$/.test(hl.styleId);
-      const isCross = /radiant/.test(hl.styleId);
-      const maskCv = hl.masking.scope !== 'none' ? makeMaskCanvas(item.mask, frame, cardW, cardH) : null;
-
-      let scanlinePat: CanvasPattern | null = null;
-      if (isVertical) {
-        const periodPx = Math.max(2, Math.round(((hl.optical.scanlineMm || 0.7) / Math.max(10, p.specs.widthMm)) * cardW));
-        const half = Math.max(1, Math.round(periodPx / 2));
-        const tile = document.createElement('canvas');
-        tile.width = periodPx;
-        tile.height = 4;
-        const tctx = tile.getContext('2d')!;
-        tctx.fillStyle = '#000000';
-        tctx.fillRect(0, 0, half, 4);
-        tctx.fillStyle = '#666666';
-        tctx.fillRect(half, 0, periodPx - half, 4);
-        scanlinePat = hCtx.createPattern(tile, 'repeat');
-      }
-
-      let presetPatImg: HTMLImageElement | null = null;
-      if (!isVertical && !isCross && stObj?.patterns[0]) {
-        presetPatImg = await new Promise<HTMLImageElement | null>((resolve) => {
-          const im = new Image();
-          im.onload = () => resolve(im);
-          im.onerror = () => resolve(null);
-          im.src = stObj.patterns[0];
-        });
-      }
-
-      return { hl, isVertical, isCross, maskCv, scanlinePat, presetPatImg, foilImg: item.foilImg, label: stObj?.label ?? hl.styleId };
-    }),
-  );
+  // Pre-build per-Holo-layer mask canvases, scanline patterns & preset textures (shared with PNG mockup)
+  const preparedHolos = await prepareExportHoloLayers(p, holoLayers, frame, cardW, cardH, hCtx);
 
   const presetLabel = preparedHolos.length ? preparedHolos.map((x) => x.label).join(' + ') : 'No Holo';
   const backPlates = p.layers.filter((l) => l.side === 'back' && l.visible && l.masks.length > 0).map((l) => l.name);
@@ -269,112 +215,7 @@ export async function generateMockupMp4(inp: MockupVideoInput): Promise<{ blob: 
     // 2. FRONT composite (Artwork + ALL visible Holo Layers + Front WebGL finishes)
     fCtx.clearRect(0, 0, cardW, cardH);
     fCtx.drawImage(frontArtCv, 0, 0);
-
-    for (const ph of preparedHolos) {
-      const opt = ph.hl.optical;
-      hCtx.clearRect(0, 0, cardW, cardH);
-      hCtx.save();
-
-      const ang = ((ph.isVertical ? 110 : opt.angle) * Math.PI) / 180;
-      const dx = Math.cos(ang) * cardW * 1.1;
-      const dy = Math.sin(ang) * cardH * 1.1;
-      const shift = ((px - 50) / 50) * 0.55 + ((py - 50) / 50) * 0.42;
-      const grad = hCtx.createLinearGradient(cardW / 2 - dx, cardH / 2 - dy, cardW / 2 + dx, cardH / 2 + dy);
-      const stops = 14;
-      for (let s = 0; s <= stops; s++) {
-        const pos = s / stops;
-        const hue = (((pos * 360 * (10 / Math.max(2, opt.space)) + shift * 240 + opt.hue) % 360) + 360) % 360;
-        grad.addColorStop(pos, `hsla(${hue}, ${Math.round(88 * opt.saturation)}%, 58%, 0.78)`);
-      }
-      hCtx.fillStyle = grad;
-      hCtx.fillRect(0, 0, cardW, cardH);
-
-      if (ph.isVertical) {
-        if (ph.scanlinePat) {
-          hCtx.globalCompositeOperation = 'overlay';
-          hCtx.fillStyle = ph.scanlinePat;
-          hCtx.fillRect(0, 0, cardW, cardH);
-        }
-        hCtx.globalCompositeOperation = 'screen';
-        const drawVerticalBeams = (offsetPx: number, period: number, alpha: number) => {
-          const bGrad = hCtx.createLinearGradient(offsetPx, 0, offsetPx + period, 0);
-          bGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
-          bGrad.addColorStop(0.18, 'rgba(0,0,0,0)');
-          bGrad.addColorStop(0.24, `rgba(255,255,255,${alpha})`);
-          bGrad.addColorStop(0.28, 'rgba(0,0,0,0)');
-          bGrad.addColorStop(0.34, `rgba(255,255,255,${alpha * 0.85})`);
-          bGrad.addColorStop(0.42, 'rgba(0,0,0,0)');
-          bGrad.addColorStop(1.0, 'rgba(0,0,0,0)');
-          hCtx.fillStyle = bGrad;
-          for (let bx = -period * 2; bx < cardW + period * 2; bx += period) {
-            hCtx.save();
-            hCtx.translate(bx, 0);
-            hCtx.fillRect(offsetPx, 0, period, cardH);
-            hCtx.restore();
-          }
-        };
-        drawVerticalBeams(((50 - px) * 3.8) % 240, 240, 0.55);
-        drawVerticalBeams(((px - 50) * 2.4) % 180, 180, 0.45);
-        hCtx.globalCompositeOperation = 'source-over';
-      } else if (ph.isCross && crossPat) {
-        hCtx.globalCompositeOperation = 'overlay';
-        hCtx.fillStyle = crossPat;
-        hCtx.fillRect(0, 0, cardW, cardH);
-        hCtx.globalCompositeOperation = 'source-over';
-      } else {
-        const tex = ph.foilImg && ph.foilImg.complete && ph.foilImg.naturalWidth > 0 ? ph.foilImg : ph.presetPatImg;
-        if (tex && tex.complete && tex.naturalWidth > 0) {
-          hCtx.globalCompositeOperation = 'multiply';
-          hCtx.globalAlpha = 0.72;
-          hCtx.drawImage(tex, 0, 0, cardW, cardH);
-          hCtx.globalCompositeOperation = 'source-over';
-          hCtx.globalAlpha = 1;
-        }
-      }
-
-      if (ph.maskCv) {
-        hCtx.globalCompositeOperation = 'destination-in';
-        hCtx.drawImage(ph.maskCv, 0, 0);
-      }
-      hCtx.restore();
-
-      fCtx.save();
-      fCtx.globalCompositeOperation = opt.blendMode === 'auto' ? 'color-dodge' : (opt.blendMode as GlobalCompositeOperation);
-      const baseAlpha = ph.isVertical ? 0.92 : 0.62;
-      fCtx.globalAlpha = Math.min(1, baseAlpha * opt.shineIntensity);
-      if (ph.isVertical || opt.brightness !== 1 || opt.contrast !== 1) {
-        const br = (ph.isVertical ? 1.1 : 1) * opt.brightness;
-        const ct = (ph.isVertical ? 1.1 : 1) * opt.contrast;
-        const sa = (ph.isVertical ? 1.2 : 1) * opt.saturation;
-        fCtx.filter = `brightness(${br.toFixed(2)}) contrast(${ct.toFixed(2)}) saturate(${sa.toFixed(2)})`;
-      }
-      fCtx.drawImage(holoLayerCv, 0, 0);
-      fCtx.restore();
-
-      // Glare spot strictly clipped to the same Holo mask so outside areas are untouched
-      if (opt.glareIntensity > 0) {
-        const gx = (px / 100) * cardW;
-        const gy = (py / 100) * cardH;
-        hCtx.clearRect(0, 0, cardW, cardH);
-        hCtx.save();
-        const glare = hCtx.createRadialGradient(gx, gy, 14, gx, gy, cardW * 0.85);
-        glare.addColorStop(0, `rgba(255,255,255,${Math.min(0.65, 0.35 * opt.glareIntensity)})`);
-        glare.addColorStop(0.35, `rgba(255,255,255,${Math.min(0.3, 0.12 * opt.glareIntensity)})`);
-        glare.addColorStop(1, 'rgba(0,0,0,0)');
-        hCtx.fillStyle = glare;
-        hCtx.fillRect(0, 0, cardW, cardH);
-        if (ph.maskCv) {
-          hCtx.globalCompositeOperation = 'destination-in';
-          hCtx.drawImage(ph.maskCv, 0, 0);
-        }
-        hCtx.restore();
-        fCtx.save();
-        fCtx.globalCompositeOperation = 'overlay';
-        fCtx.drawImage(holoLayerCv, 0, 0);
-        fCtx.restore();
-      }
-    }
-
+    compositeHoloLayers(fCtx, hCtx, holoLayerCv, preparedHolos, crossPat, cardW, cardH, state);
     fCtx.drawImage(frontCanvas, 0, 0, cardW, cardH);
 
     // 3. BACK composite
@@ -393,7 +234,7 @@ export async function generateMockupMp4(inp: MockupVideoInput): Promise<{ blob: 
     sCtx.fillStyle = '#aeb4bc';
     sCtx.font = '600 22px system-ui, -apple-system, sans-serif';
     sCtx.textAlign = 'left';
-    sCtx.fillText(`FRAMIGOSX HOLO STUDIO — 3D LIGHTING PROOF (1080p)  |  ${p.name}`, 48, 52);
+    sCtx.fillText(`FX STUDIO BY @STOOPIDUCKY — 3D LIGHTING PROOF (1080p)  |  ${p.name}`, 48, 52);
 
     sCtx.textAlign = 'right';
     sCtx.fillStyle = '#7e8690';
@@ -500,4 +341,82 @@ export async function generateMockupMp4(inp: MockupVideoInput): Promise<{ blob: 
     frontTech.render(restoreState, false);
     backTech.render(restoreState, true);
   }
+}
+
+/**
+ * Generate a high-res side-by-side Front + Back PNG mockup that includes
+ * ALL visible Holo layers + WebGL printing finishes (1:1 with 3D Preview & MP4).
+ */
+export async function generateMockupPng(inp: Omit<MockupVideoInput, 'onProgress'>): Promise<Blob | null> {
+  const { project: p, frame, sideArt, frontTech, backTech, frontCanvas, backCanvas, holoLayers, restoreState } = inp;
+  const tw = frame.trim.w;
+  const th = frame.trim.h;
+  const gap = 36;
+  const pad = 44;
+
+  const prevFW = frontCanvas.width, prevFH = frontCanvas.height;
+  const prevBW = backCanvas.width, prevBH = backCanvas.height;
+  frontCanvas.width = tw;
+  frontCanvas.height = th;
+  backCanvas.width = tw;
+  backCanvas.height = th;
+
+  // Use live preview tilt/light when active, otherwise a clean hero angle so Holo & Foil catch the light
+  const heroState: CardState =
+    restoreState.o > 0.15
+      ? { ...restoreState, o: 1, facing: 1 }
+      : { rx: -14, ry: 7, px: 38, py: 38, o: 1, facing: 1 };
+  frontTech.render(heroState, false);
+  backTech.render(heroState, true);
+
+  const frontComp = makeArtCanvas(sideArt.front, frame, tw, th);
+  const fCtx = frontComp.getContext('2d')!;
+  const backComp = makeArtCanvas(sideArt.back, frame, tw, th);
+  const bCtx = backComp.getContext('2d')!;
+
+  const holoLayerCv = document.createElement('canvas');
+  holoLayerCv.width = tw;
+  holoLayerCv.height = th;
+  const hCtx = holoLayerCv.getContext('2d')!;
+
+  const crossTile = document.createElement('canvas');
+  crossTile.width = 14;
+  crossTile.height = 14;
+  const crCtx = crossTile.getContext('2d')!;
+  crCtx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+  crCtx.lineWidth = 1.6;
+  crCtx.beginPath();
+  crCtx.moveTo(0, 0); crCtx.lineTo(14, 14);
+  crCtx.moveTo(14, 0); crCtx.lineTo(0, 14);
+  crCtx.stroke();
+  const crossPat = hCtx.createPattern(crossTile, 'repeat');
+
+  const preparedHolos = await prepareExportHoloLayers(p, holoLayers, frame, tw, th, hCtx);
+  compositeHoloLayers(fCtx, hCtx, holoLayerCv, preparedHolos, crossPat, tw, th, heroState);
+
+  fCtx.drawImage(frontCanvas, 0, 0, tw, th);
+  bCtx.drawImage(backCanvas, 0, 0, tw, th);
+
+  frontCanvas.width = prevFW;
+  frontCanvas.height = prevFH;
+  backCanvas.width = prevBW;
+  backCanvas.height = prevBH;
+  frontTech.render(restoreState, false);
+  backTech.render(restoreState, true);
+
+  const out = document.createElement('canvas');
+  out.width = tw * 2 + gap + pad * 2;
+  out.height = th + pad * 2 + 28;
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#1f2326';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(frontComp, pad, pad);
+  ctx.drawImage(backComp, pad + tw + gap, pad);
+  ctx.fillStyle = '#d4d8dc';
+  ctx.font = '500 16px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('FRONT', pad + tw / 2, pad + th + 24);
+  ctx.fillText('BACK', pad + tw + gap + tw / 2, pad + th + 24);
+
+  return await new Promise((resolve) => out.toBlob(resolve, 'image/png'));
 }

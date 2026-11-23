@@ -423,6 +423,7 @@ $$('[data-lang]').forEach((b) =>
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
+    if (store.readOnly) return;
     void loadCloudUi().then(({ quickSaveToCloud }) => quickSaveToCloud(cloudHost));
     return;
   }
@@ -891,6 +892,7 @@ function collectAssetIds(p: Project, out: Set<string>) {
 
 // ---------------- Autosave (All Open Project Tabs) ----------------
 const persist = debounce(() => {
+  if (store.readOnly) return;
   saveCurrentTabSnapshot();
   const keep = new Set<string>();
   for (const tab of projectTabs) collectAssetIds(tab.project, keep);
@@ -1210,7 +1212,16 @@ async function boot() {
   applyTheme();
 
   const shareToken = new URLSearchParams(location.search).get('share');
-  if (!shareToken) {
+  if (shareToken) {
+    store.readOnly = true;
+    document.body.classList.add('is-inspect-only');
+    projectNameInput.disabled = true;
+    quickHdriSelect.disabled = true;
+    for (const sel of ['#btn-new-proj', '#btn-open-proj', '#btn-save-proj', '#btn-portal', '#btn-cloud', '#doc-tab-new', '#doc-tab-dup', '[data-tab="export"]']) {
+      const node = document.querySelector<HTMLElement>(sel);
+      if (node) node.hidden = true;
+    }
+  } else {
     const { requireLoginGate } = await loadCloudUi();
     await requireLoginGate(cloudHost);
   }
@@ -1230,6 +1241,16 @@ async function boot() {
   const autoOn = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   store.ui.auto = autoOn;
   card.setAuto({ enabled: autoOn, amp: 13, freq: 0.35 });
+
+  if (shareToken) {
+    try {
+      const { loadSharedProjectIntoStudio } = await loadCloudUi();
+      await loadSharedProjectIntoStudio(shareToken, cloudHost);
+    } catch (err) {
+      alert(`Không mở được liên kết chia sẻ: ${(err as Error).message}`);
+    }
+    return;
+  }
 
   const saved = await loadWorkspaceTabs();
   if (saved && saved.workspace.tabs.length > 0) {
@@ -1253,14 +1274,7 @@ async function boot() {
   void requestPersistentStorage();
 
   const openProjectId = new URLSearchParams(location.search).get('project');
-  if (shareToken) {
-    try {
-      const { loadSharedProjectIntoStudio } = await loadCloudUi();
-      await loadSharedProjectIntoStudio(shareToken, cloudHost);
-    } catch (err) {
-      alert(`Không mở được liên kết chia sẻ: ${(err as Error).message}`);
-    }
-  } else if (openProjectId) {
+  if (openProjectId) {
     try {
       const { openCloudProjectById } = await loadCloudUi();
       await openCloudProjectById(openProjectId, cloudHost);

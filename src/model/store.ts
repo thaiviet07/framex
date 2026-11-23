@@ -33,6 +33,7 @@ const HISTORY_LIMIT = 120;
  */
 class Store {
   project!: Project;
+  readOnly = false;
   ui: UIState = {
     side: 'front',
     view: 'holo',
@@ -68,6 +69,7 @@ class Store {
 
   /** replace project but keep it undoable */
   replace(p: Project) {
+    if (this.readOnly) return;
     this.commitPending();
     this.past.push(JSON.stringify(this.project));
     this.future = [];
@@ -80,6 +82,7 @@ class Store {
    * from the start of the gesture; call `commit()` when the gesture ends.
    */
   update(fn: (p: Project) => void, opts: { transient?: boolean } = {}) {
+    if (this.readOnly) return;
     if (opts.transient) {
       // Snapshot only once at the start of a gesture — not on every slider tick.
       if (this.pendingSnapshot === null) this.pendingSnapshot = JSON.stringify(this.project);
@@ -107,13 +110,16 @@ class Store {
   }
 
   canUndo() {
+    if (this.readOnly) return false;
     return this.past.length > 0 || this.pendingSnapshot !== null;
   }
   canRedo() {
+    if (this.readOnly) return false;
     return this.future.length > 0;
   }
 
   undo() {
+    if (this.readOnly) return;
     this.commitPending();
     const prev = this.past.pop();
     if (!prev) return;

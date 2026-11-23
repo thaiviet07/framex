@@ -69,6 +69,20 @@ export function renderPanel(container: HTMLElement, p: Project, ui: UIState, cb:
       renderExportTab(container, p, cb);
       break;
   }
+  if (store.readOnly) {
+    container.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea').forEach((ctrl) => {
+      ctrl.disabled = true;
+    });
+    container.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+      // Allow clicking layer/mask rows and solo/inspect buttons, disable mutating actions
+      const isInspectRow = btn.classList.contains('list-item__main') || btn.classList.contains('issue');
+      const isSoloBtn = btn.textContent?.trim().toLowerCase() === 'solo';
+      const isPreflightBtn = ui.tab === 'preflight';
+      if (!isInspectRow && !isSoloBtn && !isPreflightBtn) {
+        btn.disabled = true;
+      }
+    });
+  }
   container.scrollTop = scroll;
 }
 

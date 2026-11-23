@@ -966,14 +966,8 @@ export async function loadSharedProjectIntoStudio(token: string, host: CloudHost
   const banner = document.createElement('div');
   banner.className = 'fx-share-banner';
   banner.innerHTML = `
-    <span>Bản chia sẻ chỉ xem: <strong>${esc(detail.meta.name)}</strong> · bởi ${esc(detail.meta.ownerName)}</span>
-    <button type="button" class="fx-cloud-btn" id="fx-share-dismiss">Đóng thông báo</button>
+    <span>Chế độ Preview & Inspect (Chỉ xem thông số): <strong>${esc(detail.meta.name)}</strong> · bởi ${esc(detail.meta.ownerName)}</span>
+    <a class="fx-cloud-btn fx-cloud-btn--primary" href="/">Đăng nhập Studio</a>
   `;
   document.body.appendChild(banner);
-  banner.querySelector('#fx-share-dismiss')?.addEventListener('click', () => {
-    banner.remove();
-    const url = new URL(location.href);
-    url.searchParams.delete('share');
-    history.replaceState(null, '', url.toString());
-  });
 }

@@ -85,6 +85,11 @@ class ImagingClient {
     return this.call<GrayResult>({ type: 'maskPreview', mask, frame });
   }
 
+  maskPreviewBlob(mask: MaskSpec, frame: Frame) {
+    this.ensure([mask.sourceId]);
+    return this.call<Blob>({ type: 'maskPreviewBlob', mask, frame });
+  }
+
   artwork(src: SourceSpec, frame: Frame) {
     this.ensure([src.assetId]);
     return this.call<{ w: number; h: number; data: Uint8ClampedArray }>({ type: 'artwork', src, frame });

@@ -20,6 +20,7 @@ export type Job =
   | { type: 'forget'; assetId: string }
   | { type: 'layerMask'; spec: LayerMaskSpec; frame: Frame }
   | { type: 'maskPreview'; mask: MaskSpec; frame: Frame }
+  | { type: 'maskPreviewBlob'; mask: MaskSpec; frame: Frame }
   | { type: 'artwork'; src: SourceSpec; frame: Frame }
   | { type: 'cropImage'; src: SourceSpec; frame: Frame }
   | { type: 'holoMaskImage'; spec: LayerMaskSpec; frame: Frame }
@@ -191,6 +192,17 @@ async function handle(job: Job): Promise<{ result: unknown; transfer?: Transfera
       const copy = new Uint8Array(g.data);
       return { result: { w: g.w, h: g.h, data: copy }, transfer: [copy.buffer] };
     }
+    case 'maskPreviewBlob': {
+      const g = await maskAsset(job.mask, job.frame);
+      const n = g.w * g.h;
+      const rgba = new Uint8ClampedArray(n * 4);
+      for (let i = 0; i < n; i++) {
+        const v = g.data[i];
+        rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = v;
+        rgba[i * 4 + 3] = 255;
+      }
+      return { result: await toBlob(new ImageData(rgba, g.w, g.h), 'image/webp', 0.9) };
+    }
     case 'artwork': {
       const px = await rasterize(job.src, job.frame);
       const copy = new Uint8ClampedArray(px);
@@ -347,12 +359,55 @@ async function handle(job: Job): Promise<{ result: unknown; transfer?: Transfera
   }
 }
 
-ctx.onmessage = async (e: MessageEvent<{ id: number; job: Job }>) => {
-  const { id, job } = e.data;
-  try {
-    const { result, transfer } = await handle(job);
-    ctx.postMessage({ id, ok: true, result }, transfer ?? []);
-  } catch (err) {
-    ctx.postMessage({ id, ok: false, error: String((err as Error)?.message ?? err) });
+// Coalesce incoming jobs during heavy operations so intermediate slider ticks are superseded in O(1)
+const inbox: { ids: number[]; job: Job; sig: string | null }[] = [];
+let processing = false;
+
+function jobSignature(job: Job): string | null {
+  switch (job.type) {
+    case 'maskPreview':
+    case 'maskPreviewBlob':
+      return `${job.type}:${job.mask.id}:${job.frame.w}x${job.frame.h}`;
+    case 'artwork':
+    case 'cropImage':
+      return `${job.type}:${job.src.assetId}:${job.src.fit}:${job.frame.w}x${job.frame.h}`;
+    default:
+      return null;
   }
+}
+
+async function pumpInbox() {
+  if (processing) return;
+  processing = true;
+  while (inbox.length > 0) {
+    const item = inbox.shift()!;
+    try {
+      const { result, transfer } = await handle(item.job);
+      if (item.ids.length === 1) {
+        ctx.postMessage({ id: item.ids[0], ok: true, result }, transfer ?? []);
+      } else {
+        for (const id of item.ids) ctx.postMessage({ id, ok: true, result });
+      }
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      for (const id of item.ids) ctx.postMessage({ id, ok: false, error: msg });
+    }
+  }
+  processing = false;
+}
+
+ctx.onmessage = (e: MessageEvent<{ id: number; job: Job }>) => {
+  const { id, job } = e.data;
+  const sig = jobSignature(job);
+  if (sig) {
+    const existing = inbox.find((x) => x.sig === sig);
+    if (existing) {
+      existing.job = job;
+      if (id) existing.ids.push(id);
+      void pumpInbox();
+      return;
+    }
+  }
+  inbox.push({ ids: id ? [id] : [], job, sig });
+  void pumpInbox();
 };

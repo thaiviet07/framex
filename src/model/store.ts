@@ -80,12 +80,12 @@ class Store {
    * from the start of the gesture; call `commit()` when the gesture ends.
    */
   update(fn: (p: Project) => void, opts: { transient?: boolean } = {}) {
-    const before = JSON.stringify(this.project);
     if (opts.transient) {
-      if (this.pendingSnapshot === null) this.pendingSnapshot = before;
+      // Snapshot only once at the start of a gesture — not on every slider tick.
+      if (this.pendingSnapshot === null) this.pendingSnapshot = JSON.stringify(this.project);
     } else {
       this.commitPending();
-      this.past.push(before);
+      this.past.push(JSON.stringify(this.project));
       if (this.past.length > HISTORY_LIMIT) this.past.shift();
       this.future = [];
     }

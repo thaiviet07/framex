@@ -274,9 +274,12 @@ export class TechRenderer {
   private frame: Frame | null = null;
   private substrate: Substrate = 'white';
   private u: Record<string, WebGLUniformLocation | null> = {};
+  private aPos = -1;
+  /** true while the canvas holds a cleared (empty) frame — lets us skip redundant clears */
+  private blank = false;
 
   constructor(private canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true, preserveDrawingBuffer: true });
+    const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true, preserveDrawingBuffer: false });
     this.gl = gl;
     if (!gl) return;
     this.init(gl);
@@ -308,6 +311,7 @@ export class TechRenderer {
       'uKind', 'uOpacity', 'uColor', 'uFoilMode', 'uP1', 'uP2', 'uPattern', 'uSubstrate',
     ];
     for (const n of names) this.u[n] = gl.getUniformLocation(p, n);
+    this.aPos = gl.getAttribLocation(p, 'aPos');
 
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -396,14 +400,18 @@ export class TechRenderer {
   render(state: CardState, mirrorX = false) {
     const gl = this.gl;
     if (!gl || !this.prog) return;
+    const empty = !this.draws.length || !this.frame;
+    // Nothing to draw and already cleared: skip the GL work entirely (the compositor keeps the last frame).
+    if (empty && this.blank) return;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    if (!this.draws.length || !this.frame) return;
+    this.blank = empty;
+    if (empty || !this.frame) return;
 
     gl.useProgram(this.prog);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    const loc = gl.getAttribLocation(this.prog, 'aPos');
+    const loc = this.aPos;
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 

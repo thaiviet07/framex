@@ -7,19 +7,23 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:debug": "SOURCEMAP=true tsc --noEmit && SOURCEMAP=true vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint",
+    "test": "vitest run",
+    "check:size": "node scripts/check-bundle-size.mjs",
+    "ci": "npm run typecheck && npm run lint && npm test && npm run build && npm run check:size"
   },
   "devDependencies": {
-    "@types/three": "^0.187.0",
+    "@biomejs/biome": "^2.6.8",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "gifenc": "^1.0.3",
     "mp4-muxer": "^5.2.2",
-    "pdf-lib": "^1.17.1",
-    "three": "^0.187.0"
+    "pdf-lib": "^1.17.1"
   }
 }

@@ -15,34 +15,91 @@ export interface SavedWorkspace {
   tabs: SavedTab[];
 }
 
+let dbPromise: Promise<IDBDatabase> | null = null;
+/** Asset ids known to be stored in IndexedDB (null until first load/save). */
+let persistedIds: Set<string> | null = null;
+
+/** Single shared connection (re-opened if the browser closes it). */
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_PROJECT)) db.createObjectStore(STORE_PROJECT);
       if (!db.objectStoreNames.contains(STORE_ASSETS)) db.createObjectStore(STORE_ASSETS, { keyPath: 'id' });
     };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onclose = db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      dbPromise = null;
+      reject(req.error);
+    };
+  });
+  return dbPromise;
+}
+
+function reqResult<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function saveWorkspaceTabs(ws: SavedWorkspace, assetList: Asset[]): Promise<void> {
+let saveChain: Promise<void> = Promise.resolve();
+
+/**
+ * Incremental autosave: writes the (small) workspace JSON every time, but only puts assets that are new
+ * and deletes assets that were garbage-collected — image blobs are never rewritten.
+ */
+export function saveWorkspaceTabs(ws: SavedWorkspace, assetList: Asset[]): Promise<void> {
+  saveChain = saveChain.then(() => doSave(ws, assetList));
+  return saveChain;
+}
+
+async function doSave(ws: SavedWorkspace, assetList: Asset[]): Promise<void> {
   try {
     const db = await openDb();
+    if (!persistedIds) {
+      const tx = db.transaction(STORE_ASSETS, 'readonly');
+      const keys = await reqResult(tx.objectStore(STORE_ASSETS).getAllKeys());
+      persistedIds = new Set(keys as string[]);
+    }
+    const known = persistedIds;
+    const wanted = new Set(assetList.map((a) => a.id));
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction([STORE_PROJECT, STORE_ASSETS], 'readwrite');
       tx.objectStore(STORE_PROJECT).put(ws, 'workspace');
       const aStore = tx.objectStore(STORE_ASSETS);
-      aStore.clear();
-      for (const a of assetList) aStore.put(a);
-      tx.oncomplete = () => resolve();
+      for (const a of assetList) if (!known.has(a.id)) aStore.put(a);
+      for (const id of known) if (!wanted.has(id)) aStore.delete(id);
+      tx.oncomplete = () => {
+        persistedIds = wanted;
+        resolve();
+      };
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
-    db.close();
   } catch (err) {
+    persistedIds = null; // resync from the DB on the next attempt
     console.warn('Autosave skipped:', err);
+  }
+}
+
+/** Ask the browser not to evict our IndexedDB data under storage pressure. */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
   }
 }
 
@@ -67,7 +124,7 @@ export async function loadWorkspaceTabs(): Promise<{ workspace: SavedWorkspace; 
       };
       tx.onerror = () => reject(tx.error);
     });
-    db.close();
+    persistedIds = new Set(res?.assets.map((a) => a.id) ?? []);
     return res;
   } catch {
     return null;
@@ -84,7 +141,7 @@ export async function clearWorkspace(): Promise<void> {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-    db.close();
+    persistedIds = new Set();
   } catch {
     // ignore
   }

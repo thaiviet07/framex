@@ -366,9 +366,6 @@ export async function generateMockupPng(inp: Omit<MockupVideoInput, 'onProgress'
     restoreState.o > 0.15
       ? { ...restoreState, o: 1, facing: 1 }
       : { rx: -14, ry: 7, px: 38, py: 38, o: 1, facing: 1 };
-  frontTech.render(heroState, false);
-  backTech.render(heroState, true);
-
   const frontComp = makeArtCanvas(sideArt.front, frame, tw, th);
   const fCtx = frontComp.getContext('2d')!;
   const backComp = makeArtCanvas(sideArt.back, frame, tw, th);
@@ -394,6 +391,9 @@ export async function generateMockupPng(inp: Omit<MockupVideoInput, 'onProgress'
   const preparedHolos = await prepareExportHoloLayers(p, holoLayers, frame, tw, th, hCtx);
   compositeHoloLayers(fCtx, hCtx, holoLayerCv, preparedHolos, crossPat, tw, th, heroState);
 
+  // WebGL canvases don't preserve their drawing buffer: render and read back in the same task.
+  frontTech.render(heroState, false);
+  backTech.render(heroState, true);
   fCtx.drawImage(frontCanvas, 0, 0, tw, th);
   bCtx.drawImage(backCanvas, 0, 0, tw, th);
 

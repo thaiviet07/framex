@@ -5,41 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FX Studio by @stoopiducky</title>
   <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.webmanifest">
 
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/base.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/cards.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/basic.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/reverse-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/regular-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/cosmos-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/amazing-rare.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/radiant-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/v-regular.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/v-full-art.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/v-max.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/v-star.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/trainer-full-art.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/rainbow-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/rainbow-alt.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/secret-rare.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/trainer-gallery-holo.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/trainer-gallery-v-regular.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/trainer-gallery-v-max.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/trainer-gallery-secret-rare.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/shiny-rare.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/shiny-v.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/shiny-vmax.css">
-  <link rel="stylesheet" data-engine="css" href="css/pokemon-cards-css/cards/swsh-pikachu.css">
+  <link rel="preload" as="style" href="css/pokemon-cards-css/cards/base.css">
+  <link rel="preload" as="style" href="css/pokemon-cards-css/cards/cards.css">
+  <link rel="preload" as="style" href="css/pokemon-cards-css/cards/basic.css">
+  <link rel="preload" as="style" href="css/pokemon-cards-css/cards/trainer-full-art.css">
+  <link rel="preload" as="image" href="img/card.webp" type="image/webp">
 
   <meta id="engine-anchor">
   <meta name="theme-color" content="#19191b" id="theme-color">
-  <script>
-    (function () {
-      var dark = !window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.dataset.scheme = dark ? 'dark' : 'light';
-      document.getElementById('theme-color').content = dark ? '#19191b' : '#fafafa';
-    })();
-  </script>
 </head>
 <body>
   <div class="veil" id="veil"></div>
@@ -176,7 +151,7 @@
         <div class="panel-body" id="panel-body"></div>
 
         <footer class="credit">
-          <p class="credit__internal">FX Studio by @stoopiducky</p>
+          <p class="credit__internal">FX Studio by @stoopiducky <span id="app-build-info" class="credit__build"></span></p>
           <p>Holo CSS: <a href="https://github.com/simeydotme/pokemon-cards-css" target="_blank" rel="noopener">simeydotme</a> · Base: <a href="https://github.com/fyk0620/ribi-holo" target="_blank" rel="noopener">ribi-holo</a> (GPL-3.0)</p>
         </footer>
       </aside>

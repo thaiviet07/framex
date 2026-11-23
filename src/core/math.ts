@@ -13,10 +13,30 @@ let idCounter = 0;
 export const uid = (prefix = 'id'): string =>
   `${prefix}_${Date.now().toString(36)}${(idCounter++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (...args: A) => void {
+export interface Debounced<A extends unknown[]> {
+  (...args: A): void;
+  /** run immediately if a call is pending */
+  flush(): void;
+}
+
+export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): Debounced<A> {
   let t: ReturnType<typeof setTimeout> | undefined;
-  return (...args: A) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
+  let pending: A | null = null;
+  const run = () => {
+    t = undefined;
+    const args = pending;
+    pending = null;
+    if (args) fn(...args);
   };
+  const d = ((...args: A) => {
+    pending = args;
+    clearTimeout(t);
+    t = setTimeout(run, ms);
+  }) as Debounced<A>;
+  d.flush = () => {
+    if (!pending) return;
+    clearTimeout(t);
+    run();
+  };
+  return d;
 }

@@ -12,10 +12,11 @@ import { TechRenderer, type LayerDraw } from './render/TechRenderer';
 import { renderFlat } from './render/FlatRenderer';
 import { imaging } from './imaging/client';
 import { PREFLIGHT_HEIGHT, runPreflight, type PreflightIssue } from './preflight/preflight';
-import { exportProductionZip } from './export/exporter';
-import { generateMockupMp4, generateMockupPng } from './export/mockupVideo';
-import { clearWorkspace, loadWorkspaceTabs, saveWorkspaceTabs } from './storage/db';
-import { packProject, unpackProject } from './storage/projectFile';
+import { loadWorkspaceTabs, requestPersistentStorage, saveWorkspaceTabs } from './storage/db';
+// Heavy modules (pdf-lib, fflate, mp4-muxer) are code-split and only fetched on demand.
+const loadExporter = () => import('./export/exporter');
+const loadMockup = () => import('./export/mockupVideo');
+const loadProjectFile = () => import('./storage/projectFile');
 import { renderPanel, type PanelCallbacks } from './ui/panels';
 import { clamp, debounce, uid } from './core/math';
 import { getLang, setLang, t, type Lang } from './i18n/i18n';
@@ -59,13 +60,10 @@ const cam = { zoom: 1, x: 0, y: 0, panning: false, spaceDown: false, tool: 'tilt
 
 function renderDocTabs() {
   docTabsEl.innerHTML = '';
-  const sideTag = store.ui.side === 'front' ? 'Front' : 'Back';
+  lastTabsSig = `${activeTabId}|${projectTabs.map((x) => `${x.id}:${x.id === activeTabId ? '' : x.project.name}`).join(',')}`;
   for (const tab of projectTabs) {
     const isActive = tab.id === activeTabId;
-    const pName = isActive && store.project ? store.project.name : tab.project.name;
-    const label = isActive
-      ? `${pName}.fxholo @ ${Math.round(cam.zoom * 100)}% (${sideTag} • RGB/8)`
-      : `${pName}.fxholo`;
+    const label = isActive ? activeTabLabel() : `${tab.project.name}.fxholo`;
     const tabEl = el(
       'div',
       {
@@ -90,8 +88,27 @@ function renderDocTabs() {
   }
 }
 
+function activeTabLabel() {
+  const sideTag = store.ui.side === 'front' ? 'Front' : 'Back';
+  const name = store.project?.name ?? projectTabs.find((x) => x.id === activeTabId)?.project.name ?? '';
+  return `${name}.fxholo @ ${Math.round(cam.zoom * 100)}% (${sideTag} • RGB/8)`;
+}
+
+let lastTabsSig = '';
+/** Cheap path: only patch the active tab label; full rebuild only when the tab set/order/names change. */
 function updateDocTab() {
-  renderDocTabs();
+  const sig = `${activeTabId}|${projectTabs.map((x) => `${x.id}:${x.id === activeTabId ? '' : x.project.name}`).join(',')}`;
+  if (sig !== lastTabsSig || !docTabsEl.querySelector('.doc-tab.is-active')) {
+    renderDocTabs();
+    return;
+  }
+  const label = activeTabLabel();
+  const active = docTabsEl.querySelector<HTMLElement>('.doc-tab.is-active');
+  const span = active?.querySelector('.doc-tab__label');
+  if (active && span && span.textContent !== label) {
+    span.textContent = label;
+    active.title = label;
+  }
 }
 
 function setTool(tool: ToolMode) {
@@ -233,8 +250,10 @@ card.onLayout = () => {
   backTech.resize(w, h);
 };
 card.onRender = (s) => {
-  frontTech.render(s, false);
-  backTech.render(s, true);
+  // Only the face turned toward the viewer is visible (backface-visibility: hidden), so skip the other
+  // WebGL pass. A small overlap keeps both faces fresh around the 90° edge of a flip.
+  if (s.facing > -0.15) frontTech.render(s, false);
+  if (s.facing < 0.15) backTech.render(s, true);
 };
 $('#veil').addEventListener('click', () => card.deactivate());
 
@@ -319,6 +338,7 @@ $<HTMLInputElement>('#input-open-proj').addEventListener('change', async (e) => 
   input.value = '';
   if (!f) return;
   try {
+    const { unpackProject } = await loadProjectFile();
     const { project, assets: list } = await unpackProject(f);
     project.holo = normalizeHolo(project.holo, DEFAULT_STYLE);
     project.env = normalizeEnv(project.env);
@@ -723,26 +743,18 @@ async function syncProject(p: Project) {
     }
   }
 
-  // Mask library thumbnails: ONLY recompute when masks/specs changed!
+  // Mask library thumbnails: ONLY recompute changed masks off-main-thread via OffscreenCanvas!
   const thumbKey = `${frameKey}|${JSON.stringify(p.masks)}`;
   if (thumbKey !== lastThumbKey) {
     lastThumbKey = thumbKey;
     const thumbFrame = frameForHeight(s, 120);
     await Promise.all(
       p.masks.map(async (m) => {
-        const g = await imaging.maskPreview(imaging.maskSpec(p, m), thumbFrame);
+        const blob = await imaging.maskPreviewBlob(imaging.maskSpec(p, m), thumbFrame);
         if (seq !== syncSeq) return;
-        const cv = document.createElement('canvas');
-        cv.width = g.w;
-        cv.height = g.h;
-        const ctx = cv.getContext('2d')!;
-        const img = ctx.createImageData(g.w, g.h);
-        for (let i = 0; i < g.data.length; i++) {
-          img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = g.data[i];
-          img.data[i * 4 + 3] = 255;
-        }
-        ctx.putImageData(img, 0, 0);
-        maskThumbs.set(m.id, cv.toDataURL('image/png'));
+        const oldUrl = maskThumbs.get(m.id);
+        if (oldUrl && oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
+        maskThumbs.set(m.id, URL.createObjectURL(blob));
       }),
     );
     if (seq !== syncSeq) return;
@@ -876,6 +888,11 @@ const persist = debounce(() => {
     assets.all(),
   );
 }, 600);
+// Never lose the last edits when the tab is closed or backgrounded.
+window.addEventListener('pagehide', () => persist.flush());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') persist.flush();
+});
 
 // ---------------- Mockup Capture ----------------
 async function buildExportHoloLayers(p: Project, frame: ReturnType<typeof frameForHeight>) {
@@ -905,7 +922,7 @@ async function captureMockupBlob(): Promise<Blob | null> {
   try {
     const p = store.project;
     const frame = frameForHeight(p.specs, PREVIEW_H);
-    const holoLayers = await buildExportHoloLayers(p, frame);
+    const [holoLayers, { generateMockupPng }] = await Promise.all([buildExportHoloLayers(p, frame), loadMockup()]);
     return await generateMockupPng({
       project: p,
       frame,
@@ -926,7 +943,7 @@ async function captureMockupVideo(onPct?: (pct: number) => void): Promise<{ blob
   try {
     const p = store.project;
     const frame = frameForHeight(p.specs, PREVIEW_H);
-    const holoLayers = await buildExportHoloLayers(p, frame);
+    const [holoLayers, { generateMockupMp4 }] = await Promise.all([buildExportHoloLayers(p, frame), loadMockup()]);
 
     return await generateMockupMp4({
       project: p,
@@ -950,9 +967,34 @@ async function saveProjectFile() {
   const ids = new Set<string>();
   collectAssetIds(store.project, ids);
   const used = assets.all().filter((a) => ids.has(a.id));
+  const { packProject } = await loadProjectFile();
   const blob = await packProject(store.project, used);
   const slug = store.project.name.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'project';
   triggerDownload(blob, `${slug}.fxholo`);
+}
+
+/**
+ * Update export progress without rebuilding the whole panel on every tick: while busy, patch the
+ * progress bar/label in place (rAF-throttled); full re-render only on start/finish/error.
+ */
+let progressRaf: number | null = null;
+function setExportProgress(next: typeof exportState) {
+  exportState = next;
+  const wrap = panelBody.querySelector<HTMLElement>('.export-progress');
+  if (!next.busy || !wrap || store.ui.tab !== 'export') {
+    if (progressRaf !== null) cancelAnimationFrame(progressRaf);
+    progressRaf = null;
+    renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+    return;
+  }
+  if (progressRaf !== null) return;
+  progressRaf = requestAnimationFrame(() => {
+    progressRaf = null;
+    const bar = wrap.querySelector<HTMLElement>('.progress__bar');
+    const label = wrap.querySelector<HTMLElement>('.list-item__meta');
+    if (bar) bar.style.transform = `scaleX(${Math.max(0, Math.min(100, exportState.pct)) / 100})`;
+    if (label) label.textContent = exportState.label;
+  });
 }
 
 // ---------------- Panel Callbacks ----------------
@@ -1000,16 +1042,15 @@ const panelCallbacks: PanelCallbacks = {
   async onExportZip(opts) {
     if (exportState.busy) return;
     if (exportState.downloadUrl) URL.revokeObjectURL(exportState.downloadUrl);
-    exportState = { busy: true, pct: 2, label: 'Preparing export...' };
-    renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+    setExportProgress({ busy: true, pct: 2, label: 'Preparing export...' });
     try {
       const mockupBlob = opts.mockup ? await captureMockupBlob() : null;
       const mockupVideo = opts.video
         ? await captureMockupVideo((pct) => {
-            exportState = { busy: true, pct: Math.round(pct * 0.35), label: `Encoding 1080p MP4 (${pct}%)...` };
-            renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+            setExportProgress({ busy: true, pct: Math.round(pct * 0.35), label: `Encoding 1080p MP4 (${pct}%)...` });
           })
         : null;
+      const { exportProductionZip } = await loadExporter();
       const { blob, filename } = await exportProductionZip(store.project, {
         ...opts,
         preflight: preflightIssues,
@@ -1017,39 +1058,32 @@ const panelCallbacks: PanelCallbacks = {
         mockupVideo,
         onProgress: (pct, label) => {
           const mapped = opts.video ? 35 + Math.round(pct * 0.65) : pct;
-          exportState = { busy: pct < 100, pct: mapped, label };
-          renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+          setExportProgress({ busy: pct < 100, pct: mapped, label });
         },
       });
       const downloadUrl = triggerDownload(blob, filename, true);
-      exportState = { busy: false, pct: 100, label: 'Hoàn tất!', downloadUrl, downloadName: filename, downloadSize: blob.size };
-      renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+      setExportProgress({ busy: false, pct: 100, label: 'Hoàn tất!', downloadUrl, downloadName: filename, downloadSize: blob.size });
     } catch (err) {
       console.error('Export ZIP failed:', err);
-      exportState = { busy: false, pct: 0, label: `Error: ${(err as Error).message}` };
-      renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+      setExportProgress({ busy: false, pct: 0, label: `Error: ${(err as Error).message}` });
     }
   },
   async onExportVideo() {
     if (exportState.busy) return;
     if (exportState.downloadUrl) URL.revokeObjectURL(exportState.downloadUrl);
-    exportState = { busy: true, pct: 2, label: 'Encoding 1080p MP4 (10s, 2 loops)...' };
-    renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+    setExportProgress({ busy: true, pct: 2, label: 'Encoding 1080p MP4 (10s, 2 loops)...' });
     try {
       const vid = await captureMockupVideo((pct) => {
-        exportState = { busy: pct < 100, pct, label: `Encoding 1080p MP4 (${pct}%)...` };
-        renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+        setExportProgress({ busy: pct < 100, pct, label: `Encoding 1080p MP4 (${pct}%)...` });
       });
       if (!vid) throw new Error('Failed to encode 1080p video');
       const slug = store.project.name.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'card';
       const filename = `FXH_${slug}_3d_1080p.${vid.ext}`;
       const downloadUrl = triggerDownload(vid.blob, filename, true);
-      exportState = { busy: false, pct: 100, label: `Full HD 1080p ${vid.ext.toUpperCase()} ready!`, downloadUrl, downloadName: filename, downloadSize: vid.blob.size };
-      renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+      setExportProgress({ busy: false, pct: 100, label: `Full HD 1080p ${vid.ext.toUpperCase()} ready!`, downloadUrl, downloadName: filename, downloadSize: vid.blob.size });
     } catch (err) {
       console.error('Export Video failed:', err);
-      exportState = { busy: false, pct: 0, label: `Error: ${(err as Error).message}` };
-      renderPanel(panelBody, store.project, store.ui, panelCallbacks);
+      setExportProgress({ busy: false, pct: 0, label: `Error: ${(err as Error).message}` });
     }
   },
   onSaveProject: saveProjectFile,
@@ -1101,6 +1135,19 @@ store.subscribe((p, ui, changed) => {
 async function boot() {
   applyLangUI();
   applyTheme();
+  const buildInfoEl = document.getElementById('app-build-info');
+  if (buildInfoEl) {
+    const ver = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.0.0';
+    const sha = typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev';
+    buildInfoEl.textContent = `v${ver} (${sha})`;
+  }
+  if ('serviceWorker' in navigator && import.meta.env.PROD) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {
+        /* ignore SW registration errors in private/restricted contexts */
+      });
+    });
+  }
   const autoOn = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   store.ui.auto = autoOn;
   card.setAuto({ enabled: autoOn, amp: 13, freq: 0.35 });
@@ -1123,7 +1170,7 @@ async function boot() {
     projectTabs = [{ id: uid('tab'), project: def, preflight: [], zoom: 1, panX: 0, panY: 0 }];
     activateTab(projectTabs[0].id);
   }
-  void clearWorkspace;
+  void requestPersistentStorage();
 }
 
 void boot();

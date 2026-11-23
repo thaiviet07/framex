@@ -138,7 +138,9 @@ export const STYLES: HoloStyle[] = [
 export const DEFAULT_STYLE = 'css:trainer-full-art';
 export const NO_HOLO: HoloStyle = { id: 'none', engine: 'css', label: 'Không holo', attrs: { rarity: 'common', ...P }, patterns: [] };
 
-let currentEngine: EngineId = 'css';
+/** No engine stylesheet is in the HTML; the first `loadEngine()` call mounts one on demand (non-render-blocking). */
+let currentEngine: EngineId | null = null;
+let engineLoading: { engine: EngineId; promise: Promise<void> } | null = null;
 
 /** Non-conflicting rarity-specific stylesheets per engine that can safely coexist when mixing Multi-Holo engines. */
 const EXTRA_ENGINE_FILES: Record<EngineId, string[]> = {
@@ -158,20 +160,33 @@ const EXTRA_ENGINE_FILES: Record<EngineId, string[]> = {
 /** Swap engine stylesheets and optionally mount non-conflicting rarity sheets from the other engine for mixed Multi-Holo stacks. */
 export async function loadEngine(engine: EngineId, anchor: Element, needMixed = false): Promise<void> {
   if (engine !== currentEngine) {
-    const cfg = ENGINES[engine];
-    const olds = [...document.querySelectorAll('link[data-engine]')];
-    await Promise.all(
-      cfg.files.map((file) => {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.dataset.engine = engine;
-        link.href = cfg.dir + file;
-        anchor.before(link);
-        return new Promise((resolve) => (link.onload = link.onerror = resolve));
-      }),
-    );
-    olds.forEach((l) => l.remove());
-    currentEngine = engine;
+    if (!engineLoading || engineLoading.engine !== engine) {
+      const cfg = ENGINES[engine];
+      const olds = [...document.querySelectorAll('link[data-engine]')];
+      const promise = Promise.all(
+        cfg.files.map((file) => {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.dataset.engine = engine;
+          link.href = cfg.dir + file;
+          anchor.before(link);
+          return new Promise((resolve) => (link.onload = link.onerror = resolve));
+        }),
+      ).then(() => {
+        // A newer engine request superseded this one: drop our sheets instead of activating them.
+        if (engineLoading?.promise !== promise) {
+          document.querySelectorAll(`link[data-engine="${engine}"]`).forEach((l) => {
+            if (engineLoading && engineLoading.engine !== engine) l.remove();
+          });
+          return;
+        }
+        olds.forEach((l) => l.remove());
+        currentEngine = engine;
+        engineLoading = null;
+      });
+      engineLoading = { engine, promise };
+    }
+    await engineLoading.promise;
   }
 
   // Load/unload extra non-conflicting rarity sheets from the other engine when Multi-Holo mixes css + 151

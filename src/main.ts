@@ -1183,12 +1183,24 @@ const cloudHost = {
     activateTab(newTab.id);
     persist();
   },
+  onUserChange(user: { name: string; email: string } | null) {
+    const btn = document.getElementById('btn-cloud');
+    if (!btn) return;
+    btn.textContent = user ? user.name : 'Cloud';
+    btn.setAttribute('title', user ? `${user.name} (${user.email}) — FX Cloud` : 'Lưu trữ & Chia sẻ trên Cloudflare');
+  },
 };
 
 // ---------------- Bootstrap ----------------
 async function boot() {
   applyLangUI();
   applyTheme();
+
+  const shareToken = new URLSearchParams(location.search).get('share');
+  if (!shareToken) {
+    const { requireLoginGate } = await loadCloudUi();
+    await requireLoginGate(cloudHost);
+  }
   const buildInfoEl = document.getElementById('app-build-info');
   if (buildInfoEl) {
     const ver = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.0.0';
@@ -1227,7 +1239,6 @@ async function boot() {
   }
   void requestPersistentStorage();
 
-  const shareToken = new URLSearchParams(location.search).get('share');
   if (shareToken) {
     try {
       const { loadSharedProjectIntoStudio } = await loadCloudUi();

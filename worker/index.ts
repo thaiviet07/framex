@@ -25,12 +25,13 @@ app.get('/share/:token', (c) => {
 });
 
 // Serve Admin SPA entry at /admin and /admin/*
+// Note: Cloudflare Workers Assets canonicalizes /admin.html -> /admin (307),
+// so fetch /admin directly to avoid a redirect loop.
 app.get('/admin', async (c) => {
-  const url = new URL('/admin.html', c.req.url);
-  return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
+  return c.env.ASSETS.fetch(c.req.raw);
 });
 app.get('/admin/*', async (c) => {
-  const url = new URL('/admin.html', c.req.url);
+  const url = new URL('/admin', c.req.url);
   return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
 });
 

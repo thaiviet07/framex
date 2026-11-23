@@ -27,6 +27,19 @@ function injectStyles() {
       display: grid; place-items: center; padding: 20px;
       font-family: inherit;
     }
+    .fx-cloud-gate {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #111114; color: #f3f3f5;
+      display: grid; place-items: center; padding: 24px;
+      font-family: inherit;
+    }
+    .fx-cloud-gate-card {
+      width: 100%; max-width: 390px;
+      background: #18181c; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; padding: 28px;
+      display: flex; flex-direction: column; gap: 14px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+    }
     .fx-cloud-modal {
       width: 100%; max-width: 720px; max-height: 86vh;
       background: #18181c; color: #f3f3f5;
@@ -256,7 +269,8 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
     body.querySelector('#fxc-logout')?.addEventListener('click', async () => {
       await cloudApi.logout();
       host.onUserChange?.(null);
-      renderLogin();
+      close();
+      await requireLoginGate(host);
     });
 
     const runSave = async (asNew: boolean) => {
@@ -369,6 +383,93 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
     }
   } catch {
     renderLogin('Không kết nối được máy chủ Cloudflare Worker (/api/auth/me)');
+  }
+}
+
+export async function requireLoginGate(host: CloudHost): Promise<CloudUser> {
+  injectStyles();
+  document.querySelector('.fx-cloud-gate')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fx-cloud-gate';
+  overlay.innerHTML = `
+    <div class="fx-cloud-gate-card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <img src="logo.png" alt="FX Studio" style="width:28px;height:28px;border-radius:6px">
+        <strong style="font-size:16px">FX Studio</strong>
+      </div>
+      <div class="fx-cloud-muted">Đang kiểm tra phiên đăng nhập…</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const renderForm = (errorMsg: string, setupRequired: boolean, resolve: (u: CloudUser) => void) => {
+    overlay.innerHTML = `
+      <form class="fx-cloud-gate-card" id="fx-gate-form">
+        <div style="display:flex;align-items:center;gap:10px">
+          <img src="logo.png" alt="FX Studio" style="width:28px;height:28px;border-radius:6px">
+          <strong style="font-size:16px">FX Studio</strong>
+        </div>
+        <div>
+          <h2 style="margin:0 0 4px;font-size:19px;font-weight:600">
+            ${setupRequired ? 'Khởi tạo hệ thống' : 'Đăng nhập nội bộ'}
+          </h2>
+          <div class="fx-cloud-muted">
+            ${
+              setupRequired
+                ? 'Chưa có tài khoản quản trị nào. Mở trang /admin để tạo tài khoản Admin đầu tiên.'
+                : 'Vui lòng đăng nhập bằng tài khoản được cấp để sử dụng FX Studio.'
+            }
+          </div>
+        </div>
+        ${errorMsg ? `<div class="fx-cloud-err">${esc(errorMsg)}</div>` : ''}
+        ${
+          setupRequired
+            ? `<a class="fx-cloud-btn fx-cloud-btn--primary" href="/admin" style="justify-content:center;padding:10px 14px">Khởi tạo tài khoản Admin (/admin)</a>`
+            : `
+              <input class="fx-cloud-input" id="fxg-email" type="email" required placeholder="Email tài khoản" autocomplete="username" autofocus>
+              <input class="fx-cloud-input" id="fxg-pass" type="password" required placeholder="Mật khẩu" autocomplete="current-password">
+              <button class="fx-cloud-btn fx-cloud-btn--primary" id="fxg-submit" type="submit" style="justify-content:center;padding:10px 14px">Đăng nhập</button>
+            `
+        }
+      </form>
+    `;
+
+    const form = overlay.querySelector('#fx-gate-form') as HTMLFormElement | null;
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = (overlay.querySelector('#fxg-email') as HTMLInputElement).value.trim();
+      const pass = (overlay.querySelector('#fxg-pass') as HTMLInputElement).value;
+      const submitBtn = overlay.querySelector('#fxg-submit') as HTMLButtonElement | null;
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Đang đăng nhập…';
+      }
+      try {
+        const res = await cloudApi.login(email, pass);
+        host.onUserChange?.(res.user);
+        overlay.remove();
+        resolve(res.user);
+      } catch (err) {
+        renderForm(err instanceof Error ? err.message : 'Đăng nhập thất bại', false, resolve);
+      }
+    });
+  };
+
+  try {
+    const me = await cloudApi.me();
+    if (me.user) {
+      host.onUserChange?.(me.user);
+      overlay.remove();
+      return me.user;
+    }
+    return await new Promise<CloudUser>((resolve) => {
+      renderForm('', me.setupRequired, resolve);
+    });
+  } catch {
+    return await new Promise<CloudUser>((resolve) => {
+      renderForm('Không kết nối được máy chủ xác thực (/api/auth/me)', false, resolve);
+    });
   }
 }
 

@@ -3,6 +3,7 @@ import type { Asset, Project } from '../model/types';
 export type UserRole = 'admin' | 'member';
 export type UserStatus = 'active' | 'disabled';
 export type ProjectVisibility = 'team' | 'private';
+export type ProjectStatus = 'draft' | 'review' | 'approved';
 
 export interface CloudUser {
   id: string;
@@ -20,6 +21,20 @@ export interface AuthMeResponse {
   user: CloudUser | null;
   usedBytes?: number;
   setupRequired: boolean;
+  settings?: {
+    defaultVisibility: ProjectVisibility;
+    allowPublicShare: boolean;
+  };
+}
+
+export interface CloudSessionItem {
+  id: string;
+  fullId: string;
+  userAgent: string | null;
+  ip: string | null;
+  createdAt: number;
+  expiresAt: number;
+  isCurrent: boolean;
 }
 
 export interface CloudProjectSummary {
@@ -30,6 +45,9 @@ export interface CloudProjectSummary {
   isOwner: boolean;
   name: string;
   visibility: ProjectVisibility;
+  status: ProjectStatus;
+  tags: string[];
+  notes: string;
   hasThumbnail: boolean;
   thumbnailUrl: string | null;
   assetCount: number;
@@ -53,6 +71,29 @@ export interface CloudProjectDetail {
     sizeBytes: number;
     sha256: string;
     uploaded: boolean;
+    url: string;
+  }>;
+}
+
+export interface CloudVersionSummary {
+  id: string;
+  version: number;
+  name: string;
+  savedByName: string | null;
+  note: string;
+  createdAt: number;
+}
+
+export interface CloudVersionDetail {
+  version: CloudVersionSummary;
+  project: Project;
+  assets: Array<{
+    id: string;
+    name: string;
+    type: string;
+    width: number;
+    height: number;
+    sizeBytes: number;
     url: string;
   }>;
 }
@@ -148,6 +189,22 @@ export const cloudApi = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => apiJson<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  updateProfile: (name: string) =>
+    apiJson<{ ok: boolean; name: string }>('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiJson<{ ok: boolean }>('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  listSessions: () => apiJson<{ sessions: CloudSessionItem[] }>('/api/auth/sessions'),
+  revokeSession: (fullId: string) =>
+    apiJson<{ ok: boolean }>(`/api/auth/sessions/${encodeURIComponent(fullId)}`, { method: 'DELETE' }),
+  revokeOtherSessions: () =>
+    apiJson<{ ok: boolean; revoked: number }>('/api/auth/sessions/revoke-others', { method: 'POST' }),
+
   listProjects: () =>
     apiJson<{ projects: CloudProjectSummary[]; usedBytes: number; quotaBytes: number }>('/api/projects'),
   getProject: (id: string) => apiJson<CloudProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),
@@ -161,6 +218,26 @@ export const cloudApi = {
         body: JSON.stringify({ visibility }),
       },
     ),
+  updateProjectMeta: (
+    id: string,
+    patch: {
+      name?: string;
+      status?: ProjectStatus;
+      tags?: string[];
+      notes?: string;
+      visibility?: ProjectVisibility;
+    },
+  ) =>
+    apiJson<{ project: CloudProjectSummary }>(`/api/projects/${encodeURIComponent(id)}/meta`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  listVersions: (projectId: string) =>
+    apiJson<{ versions: CloudVersionSummary[] }>(`/api/projects/${encodeURIComponent(projectId)}/versions`),
+  getVersion: (projectId: string, versionId: string) =>
+    apiJson<CloudVersionDetail>(
+      `/api/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}`,
+    ),
   toggleShare: (id: string, enabled: boolean, regenerate = false) =>
     apiJson<{ shareEnabled: boolean; shareToken: string | null; shareUrl: string | null }>(
       `/api/projects/${encodeURIComponent(id)}/share`,
@@ -171,19 +248,16 @@ export const cloudApi = {
     ),
   getShared: (token: string) => apiJson<SharedProjectDetail>(`/api/share/${encodeURIComponent(token)}`),
 
-  /**
-   * Incremental cloud save:
-   * 1) Hashes each asset with SHA-256 in the browser
-   * 2) Posts project JSON + asset manifest to D1
-   * 3) Uploads ONLY missing assets to R2
-   * 4) Uploads optional preview thumbnail to R2
-   */
   async saveProject(
     project: Project,
     assetList: Asset[],
     options?: {
       cloudId?: string;
       visibility?: ProjectVisibility;
+      status?: ProjectStatus;
+      tags?: string[];
+      notes?: string;
+      versionNote?: string;
       thumbnail?: Blob | null;
       onProgress?: (label: string, ratio: number) => void;
     },
@@ -224,7 +298,11 @@ export const cloudApi = {
       body: JSON.stringify({
         id: options?.cloudId,
         name: project.name,
-        visibility: options?.visibility ?? 'team',
+        visibility: options?.visibility,
+        status: options?.status,
+        tags: options?.tags,
+        notes: options?.notes,
+        versionNote: options?.versionNote,
         project,
         assets: manifest,
       }),

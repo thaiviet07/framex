@@ -12,6 +12,14 @@ export interface Env {
 export type UserRole = 'admin' | 'member';
 export type UserStatus = 'active' | 'disabled';
 export type ProjectVisibility = 'team' | 'private';
+export type ProjectStatus = 'draft' | 'review' | 'approved';
+
+export interface AppSettings {
+  defaultQuotaMb: number;
+  defaultVisibility: ProjectVisibility;
+  allowPublicShare: boolean;
+  maxVersionsPerProject: number;
+}
 
 export interface UserRow {
   id: string;
@@ -50,8 +58,24 @@ export interface ProjectRow {
   share_token: string | null;
   share_enabled: number;
   visibility: ProjectVisibility;
+  status: ProjectStatus;
+  tags: string;
+  notes: string;
   created_at: number;
   updated_at: number;
+}
+
+export interface ProjectVersionRow {
+  id: string;
+  project_id: string;
+  version: number;
+  name: string;
+  data_json: string;
+  asset_manifest_json: string;
+  saved_by: string | null;
+  saved_by_name: string | null;
+  note: string;
+  created_at: number;
 }
 
 export interface AssetRow {

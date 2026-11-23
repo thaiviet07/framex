@@ -9,6 +9,7 @@ import {
   toSafeUser,
 } from '../auth';
 import { hashPassword, randomId, verifyPassword } from '../crypto';
+import { getAppSettings } from '../settings';
 import { getUserUsedBytes } from '../storage';
 import type { AppEnv, UserRow } from '../types';
 
@@ -115,8 +116,80 @@ authRoutes.get('/auth/me', async (c) => {
     const countRow = await c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM users').first<{ cnt: number }>();
     return c.json({ user: null, setupRequired: (countRow?.cnt ?? 0) === 0 });
   }
-  const usedBytes = await getUserUsedBytes(c.env.DB, user.id);
-  return c.json({ user, usedBytes, setupRequired: false });
+  const [usedBytes, settings] = await Promise.all([
+    getUserUsedBytes(c.env.DB, user.id),
+    getAppSettings(c.env),
+  ]);
+  return c.json({
+    user,
+    usedBytes,
+    setupRequired: false,
+    settings: {
+      defaultVisibility: settings.defaultVisibility,
+      allowPublicShare: settings.allowPublicShare,
+    },
+  });
+});
+
+authRoutes.patch('/auth/profile', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+  const name = (body.name ?? '').trim().slice(0, 100);
+  if (!name) {
+    return c.json({ error: 'Tên hiển thị không được để trống' }, 400);
+  }
+  const now = Date.now();
+  await c.env.DB.prepare('UPDATE users SET name = ?, updated_at = ? WHERE id = ?')
+    .bind(name, now, user.id)
+    .run();
+  await logAudit(c, 'auth.profile_update', 'user', user.id, { name });
+  return c.json({ ok: true, name });
+});
+
+authRoutes.get('/auth/sessions', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const curSid = c.get('sessionId');
+  const now = Date.now();
+  const rows = await c.env.DB.prepare(
+    `SELECT id, user_agent AS userAgent, ip, created_at AS createdAt, expires_at AS expiresAt
+     FROM sessions
+     WHERE user_id = ? AND expires_at > ?
+     ORDER BY created_at DESC`,
+  )
+    .bind(user.id, now)
+    .all<{ id: string; userAgent: string | null; ip: string | null; createdAt: number; expiresAt: number }>();
+
+  return c.json({
+    sessions: (rows.results ?? []).map((s) => ({
+      id: s.id.slice(0, 12),
+      fullId: s.id,
+      userAgent: s.userAgent,
+      ip: s.ip,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+      isCurrent: s.id === curSid,
+    })),
+  });
+});
+
+authRoutes.delete('/auth/sessions/:id', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const targetId = c.req.param('id')!;
+  await c.env.DB.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?')
+    .bind(targetId, user.id)
+    .run();
+  await logAudit(c, 'auth.session_revoke', 'user', user.id);
+  return c.json({ ok: true });
+});
+
+authRoutes.post('/auth/sessions/revoke-others', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const curSid = c.get('sessionId');
+  const res = await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?')
+    .bind(user.id, curSid ?? '')
+    .run();
+  await logAudit(c, 'auth.sessions_revoke_others', 'user', user.id, { revoked: res.meta?.changes ?? 0 });
+  return c.json({ ok: true, revoked: res.meta?.changes ?? 0 });
 });
 
 authRoutes.post('/auth/password', requireAuth, async (c) => {

@@ -421,6 +421,11 @@ $$('[data-lang]').forEach((b) =>
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    void loadCloudUi().then(({ quickSaveToCloud }) => quickSaveToCloud(cloudHost));
+    return;
+  }
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (e.code === 'Space' && !cam.spaceDown) {
@@ -1187,8 +1192,15 @@ const cloudHost = {
   onUserChange(user: { name: string; email: string } | null) {
     const btn = document.getElementById('btn-cloud');
     if (!btn) return;
+    btn.dataset.user = user ? user.name : '';
     btn.textContent = user ? user.name : 'Cloud';
-    btn.setAttribute('title', user ? `${user.name} (${user.email}) — FX Cloud` : 'Lưu trữ & Chia sẻ trên Cloudflare');
+    btn.setAttribute('title', user ? `${user.name} (${user.email}) — FX Cloud (⌘S lưu nhanh)` : 'Lưu trữ & Chia sẻ trên Cloudflare');
+  },
+  onSyncLabel(label: string | null) {
+    const btn = document.getElementById('btn-cloud');
+    if (!btn) return;
+    const base = btn.dataset.user || 'Cloud';
+    btn.textContent = label ? `${base} · ${label}` : base;
   },
 };
 
@@ -1240,12 +1252,23 @@ async function boot() {
   }
   void requestPersistentStorage();
 
+  const openProjectId = new URLSearchParams(location.search).get('project');
   if (shareToken) {
     try {
       const { loadSharedProjectIntoStudio } = await loadCloudUi();
       await loadSharedProjectIntoStudio(shareToken, cloudHost);
     } catch (err) {
       alert(`Không mở được liên kết chia sẻ: ${(err as Error).message}`);
+    }
+  } else if (openProjectId) {
+    try {
+      const { openCloudProjectById } = await loadCloudUi();
+      await openCloudProjectById(openProjectId, cloudHost);
+      const cleanUrl = new URL(location.href);
+      cleanUrl.searchParams.delete('project');
+      history.replaceState(null, '', cleanUrl.toString());
+    } catch (err) {
+      alert(`Không mở được dự án Cloud: ${(err as Error).message}`);
     }
   }
 }

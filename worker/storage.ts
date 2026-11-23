@@ -89,3 +89,44 @@ export function assetR2Key(ownerId: string, sha256: string): string {
 export function thumbR2Key(projectId: string): string {
   return `thumbs/${projectId}.webp`;
 }
+
+/** Scan R2 bucket for objects not referenced in D1 `assets` or `projects.thumbnail_key` and optionally delete them. */
+export async function cleanOrphanR2Objects(
+  env: Env,
+  dryRun = false,
+): Promise<{ scanned: number; orphans: number; deleted: number; reclaimedBytes: number }> {
+  const [assetRefs, thumbRefs] = await Promise.all([
+    env.DB.prepare('SELECT DISTINCT r2_key FROM assets').all<{ r2_key: string }>(),
+    env.DB.prepare('SELECT thumbnail_key FROM projects WHERE thumbnail_key IS NOT NULL').all<{
+      thumbnail_key: string;
+    }>(),
+  ]);
+
+  const referenced = new Set<string>();
+  for (const r of assetRefs.results ?? []) referenced.add(r.r2_key);
+  for (const r of thumbRefs.results ?? []) referenced.add(r.thumbnail_key);
+
+  let cursor: string | undefined;
+  let scanned = 0;
+  let orphans = 0;
+  let deleted = 0;
+  let reclaimedBytes = 0;
+
+  do {
+    const page = await env.BUCKET.list({ cursor, limit: 500 });
+    for (const obj of page.objects) {
+      scanned++;
+      if (!referenced.has(obj.key)) {
+        orphans++;
+        reclaimedBytes += obj.size;
+        if (!dryRun) {
+          await env.BUCKET.delete(obj.key);
+          deleted++;
+        }
+      }
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  return { scanned, orphans, deleted, reclaimedBytes };
+}

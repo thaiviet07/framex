@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { logAudit, requireAuth } from '../auth';
 import { randomId, randomToken, sha256Hex } from '../crypto';
+import { getAppSettings } from '../settings';
 import {
   assetR2Key,
   deleteProjectWithAssets,
@@ -8,7 +9,14 @@ import {
   getUserUsedBytes,
   thumbR2Key,
 } from '../storage';
-import type { AppEnv, AssetRow, ProjectRow, ProjectVisibility } from '../types';
+import type {
+  AppEnv,
+  AssetRow,
+  ProjectRow,
+  ProjectStatus,
+  ProjectVersionRow,
+  ProjectVisibility,
+} from '../types';
 
 const MAX_ASSET_BYTES = 40 * 1024 * 1024; // 40 MB per asset
 const MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2 MB per thumbnail
@@ -32,6 +40,35 @@ function canReadProject(proj: { owner_id: string; visibility?: string }, user: {
   return proj.owner_id === user.id || user.role === 'admin' || (proj.visibility ?? 'team') === 'team';
 }
 
+function parseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string').slice(0, 12) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const t = raw.trim().slice(0, 32);
+    if (!t || seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    out.push(t);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+function normalizeStatus(v: unknown, fallback: ProjectStatus = 'draft'): ProjectStatus {
+  return v === 'draft' || v === 'review' || v === 'approved' ? v : fallback;
+}
+
 function serializeProjectSummary(row: ProjectWithOwnerRow, viewerId?: string) {
   return {
     id: row.id,
@@ -41,6 +78,9 @@ function serializeProjectSummary(row: ProjectWithOwnerRow, viewerId?: string) {
     isOwner: viewerId ? row.owner_id === viewerId : false,
     name: row.name,
     visibility: (row.visibility === 'private' ? 'private' : 'team') as ProjectVisibility,
+    status: normalizeStatus(row.status, 'draft'),
+    tags: parseTags(row.tags),
+    notes: row.notes ?? '',
     hasThumbnail: Boolean(row.thumbnail_key),
     thumbnailUrl: row.thumbnail_key ? `/api/projects/${row.id}/thumbnail?v=${row.updated_at}` : null,
     assetCount: row.asset_count,
@@ -84,6 +124,10 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
       id?: string;
       name?: string;
       visibility?: ProjectVisibility;
+      status?: ProjectStatus;
+      tags?: string[];
+      notes?: string;
+      versionNote?: string;
       project?: Record<string, unknown>;
       assets?: AssetManifestItem[];
     }>()
@@ -93,6 +137,7 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
     return c.json({ error: 'Dữ liệu project không hợp lệ' }, 400);
   }
 
+  const settings = await getAppSettings(c.env);
   const name = (body.name ?? (body.project.name as string) ?? 'FX Card').trim().slice(0, 120) || 'FX Card';
   const manifest = Array.isArray(body.assets) ? body.assets : [];
   const dataJson = JSON.stringify(body.project);
@@ -118,7 +163,20 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
         ? existing.visibility === 'private'
           ? 'private'
           : 'team'
-        : 'team';
+        : settings.defaultVisibility;
+  const status: ProjectStatus = normalizeStatus(
+    body.status,
+    existing ? normalizeStatus(existing.status, 'draft') : 'draft',
+  );
+  const tagsJson = JSON.stringify(
+    body.tags !== undefined ? normalizeTags(body.tags) : existing ? parseTags(existing.tags) : [],
+  );
+  const notes =
+    typeof body.notes === 'string'
+      ? body.notes.trim().slice(0, 2000)
+      : existing
+        ? (existing.notes ?? '')
+        : '';
 
   // Check which SHA-256 blobs are already uploaded in R2 for this owner (and verify in R2)
   const existingShaRows = await c.env.DB.prepare(
@@ -166,21 +224,56 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
 
   const totalProjectBytes = manifest.reduce((sum, a) => sum + Math.max(0, Number(a.sizeBytes) || 0), 0);
 
+  const nextVersion = existing ? existing.version + 1 : 1;
+
   if (existing) {
     await c.env.DB.prepare(
       `UPDATE projects
-       SET name = ?, data_json = ?, visibility = ?, asset_count = ?, total_bytes = ?, version = version + 1, updated_at = ?
+       SET name = ?, data_json = ?, visibility = ?, status = ?, tags = ?, notes = ?, asset_count = ?, total_bytes = ?, version = ?, updated_at = ?
        WHERE id = ?`,
     )
-      .bind(name, dataJson, visibility, manifest.length, totalProjectBytes, now, projectId)
+      .bind(name, dataJson, visibility, status, tagsJson, notes, manifest.length, totalProjectBytes, nextVersion, now, projectId)
       .run();
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO projects (id, owner_id, name, data_json, visibility, asset_count, total_bytes, version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO projects (id, owner_id, name, data_json, visibility, status, tags, notes, asset_count, total_bytes, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     )
-      .bind(projectId, ownerId, name, dataJson, visibility, manifest.length, totalProjectBytes, now, now)
+      .bind(projectId, ownerId, name, dataJson, visibility, status, tagsJson, notes, manifest.length, totalProjectBytes, now, now)
       .run();
+  }
+
+  // Record lightweight snapshot in project_versions & trim beyond maxVersionsPerProject
+  try {
+    const verNote = typeof body.versionNote === 'string' ? body.versionNote.trim().slice(0, 200) : '';
+    await c.env.DB.prepare(
+      `INSERT INTO project_versions (id, project_id, version, name, data_json, asset_manifest_json, saved_by, saved_by_name, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        randomId('ver'),
+        projectId,
+        nextVersion,
+        name,
+        dataJson,
+        JSON.stringify(manifest.map(({ id, name: n, type, width, height, sizeBytes, sha256 }) => ({ id, name: n, type, width, height, sizeBytes, sha256 }))),
+        user.id,
+        user.name,
+        verNote,
+        now,
+      )
+      .run();
+
+    await c.env.DB.prepare(
+      `DELETE FROM project_versions
+       WHERE project_id = ? AND id NOT IN (
+         SELECT id FROM project_versions WHERE project_id = ? ORDER BY version DESC LIMIT ?
+       )`,
+    )
+      .bind(projectId, projectId, settings.maxVersionsPerProject)
+      .run();
+  } catch {
+    // Non-fatal if migration hasn't run yet
   }
 
   // Reconcile project assets: find removed ones for R2 GC
@@ -448,6 +541,142 @@ projectRoutes.patch('/projects/:id/visibility', requireAuth, async (c) => {
   return c.json({ ok: true, visibility: body.visibility });
 });
 
+projectRoutes.patch('/projects/:id/meta', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const projectId = c.req.param('id')!;
+  const body = await c.req
+    .json<{
+      name?: string;
+      status?: ProjectStatus;
+      tags?: string[];
+      notes?: string;
+      visibility?: ProjectVisibility;
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          name?: string;
+          status?: ProjectStatus;
+          tags?: string[];
+          notes?: string;
+          visibility?: ProjectVisibility;
+        },
+    );
+
+  const proj = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<ProjectRow>();
+  if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
+  if (proj.owner_id !== user.id && user.role !== 'admin') {
+    return c.json({ error: 'Chỉ chủ sở hữu hoặc Admin mới sửa được thông tin dự án' }, 403);
+  }
+
+  const updates: string[] = [];
+  const binds: unknown[] = [];
+
+  if (typeof body.name === 'string' && body.name.trim()) {
+    updates.push('name = ?');
+    binds.push(body.name.trim().slice(0, 120));
+  }
+  if (body.status === 'draft' || body.status === 'review' || body.status === 'approved') {
+    updates.push('status = ?');
+    binds.push(body.status);
+  }
+  if (body.tags !== undefined) {
+    updates.push('tags = ?');
+    binds.push(JSON.stringify(normalizeTags(body.tags)));
+  }
+  if (typeof body.notes === 'string') {
+    updates.push('notes = ?');
+    binds.push(body.notes.trim().slice(0, 2000));
+  }
+  if (body.visibility === 'team' || body.visibility === 'private') {
+    updates.push('visibility = ?');
+    binds.push(body.visibility);
+  }
+
+  if (updates.length === 0) return c.json({ error: 'Không có thay đổi nào' }, 400);
+  updates.push('updated_at = ?');
+  binds.push(Date.now(), projectId);
+
+  await c.env.DB.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+  await logAudit(c, 'project.meta', 'project', projectId, { fields: Object.keys(body) });
+
+  const updated = await c.env.DB.prepare(
+    `SELECT p.*, u.name AS owner_name, u.email AS owner_email
+     FROM projects p JOIN users u ON u.id = p.owner_id
+     WHERE p.id = ?`,
+  )
+    .bind(projectId)
+    .first<ProjectWithOwnerRow>();
+
+  return c.json({ project: updated ? serializeProjectSummary(updated, user.id) : null });
+});
+
+projectRoutes.get('/projects/:id/versions', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const projectId = c.req.param('id')!;
+
+  const proj = await c.env.DB.prepare('SELECT owner_id, visibility FROM projects WHERE id = ?')
+    .bind(projectId)
+    .first<{ owner_id: string; visibility: string }>();
+  if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
+  if (!canReadProject(proj, user)) {
+    return c.json({ error: 'Không có quyền truy cập' }, 403);
+  }
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id, version, name, saved_by_name AS savedByName, note, created_at AS createdAt
+     FROM project_versions
+     WHERE project_id = ?
+     ORDER BY version DESC
+     LIMIT 50`,
+  )
+    .bind(projectId)
+    .all();
+
+  return c.json({ versions: rows.results ?? [] });
+});
+
+projectRoutes.get('/projects/:id/versions/:versionId', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const projectId = c.req.param('id')!;
+  const versionId = c.req.param('versionId')!;
+
+  const proj = await c.env.DB.prepare('SELECT owner_id, visibility FROM projects WHERE id = ?')
+    .bind(projectId)
+    .first<{ owner_id: string; visibility: string }>();
+  if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
+  if (!canReadProject(proj, user)) {
+    return c.json({ error: 'Không có quyền truy cập' }, 403);
+  }
+
+  const ver = await c.env.DB.prepare('SELECT * FROM project_versions WHERE id = ? AND project_id = ?')
+    .bind(versionId, projectId)
+    .first<ProjectVersionRow>();
+  if (!ver) return c.json({ error: 'Không tìm thấy phiên bản' }, 404);
+
+  const manifest = JSON.parse(ver.asset_manifest_json || '[]') as AssetManifestItem[];
+  return c.json({
+    version: {
+      id: ver.id,
+      version: ver.version,
+      name: ver.name,
+      savedByName: ver.saved_by_name,
+      note: ver.note,
+      createdAt: ver.created_at,
+    },
+    project: JSON.parse(ver.data_json),
+    assets: manifest.map((a) => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      width: a.width,
+      height: a.height,
+      sizeBytes: a.sizeBytes,
+      url: `/api/projects/${projectId}/assets/${encodeURIComponent(a.id)}`,
+    })),
+  });
+});
+
 projectRoutes.post('/projects/:id/share', requireAuth, async (c) => {
   const user = c.get('user')!;
   const projectId = c.req.param('id')!;
@@ -462,6 +691,12 @@ projectRoutes.post('/projects/:id/share', requireAuth, async (c) => {
   }
 
   const enabled = body.enabled !== undefined ? Boolean(body.enabled) : proj.share_enabled !== 1;
+  if (enabled) {
+    const settings = await getAppSettings(c.env);
+    if (!settings.allowPublicShare) {
+      return c.json({ error: 'Quản trị viên đã tắt tính năng tạo link chia sẻ công khai' }, 403);
+    }
+  }
   let token = proj.share_token;
   if (enabled && (!token || body.regenerate)) {
     token = randomToken(16);

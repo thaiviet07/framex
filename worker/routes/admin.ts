@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
-import { defaultQuotaBytes, logAudit, requireAdmin } from '../auth';
+import { logAudit, requireAdmin } from '../auth';
 import { hashPassword, randomId } from '../crypto';
-import { deleteProjectWithAssets, deleteUserWithAssets } from '../storage';
-import type { AppEnv, UserRole, UserStatus } from '../types';
+import { getAppSettings, updateAppSettings } from '../settings';
+import { cleanOrphanR2Objects, deleteProjectWithAssets, deleteUserWithAssets } from '../storage';
+import type { AppEnv, ProjectStatus, ProjectVisibility, UserRole, UserStatus } from '../types';
 
 export const adminRoutes = new Hono<AppEnv>();
 
@@ -30,9 +31,21 @@ adminRoutes.get('/overview', async (c) => {
       `SELECT
          COUNT(*) AS totalProjects,
          SUM(CASE WHEN share_enabled = 1 THEN 1 ELSE 0 END) AS sharedProjects,
+         SUM(CASE WHEN visibility = 'private' THEN 1 ELSE 0 END) AS privateProjects,
+         SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draftProjects,
+         SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) AS reviewProjects,
+         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approvedProjects,
          COALESCE(SUM(asset_count), 0) AS totalAssetRefs
        FROM projects`,
-    ).first<{ totalProjects: number; sharedProjects: number; totalAssetRefs: number }>(),
+    ).first<{
+      totalProjects: number;
+      sharedProjects: number;
+      privateProjects: number;
+      draftProjects: number;
+      reviewProjects: number;
+      approvedProjects: number;
+      totalAssetRefs: number;
+    }>(),
 
     c.env.DB.prepare(
       `SELECT
@@ -76,12 +89,36 @@ adminRoutes.get('/overview', async (c) => {
     ).all(),
   ]);
 
-  const since7d = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recentActivityCount = await c.env.DB.prepare(
-    'SELECT COUNT(*) AS cnt FROM audit_logs WHERE created_at >= ?',
-  )
-    .bind(since7d)
-    .first<{ cnt: number }>();
+  const now = Date.now();
+  const since7d = now - 7 * 24 * 60 * 60 * 1000;
+  const since14d = now - 13 * 24 * 60 * 60 * 1000;
+  const [recentActivityCount, raw14d] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM audit_logs WHERE created_at >= ?')
+      .bind(since7d)
+      .first<{ cnt: number }>(),
+    c.env.DB.prepare(
+      `SELECT action, created_at AS createdAt
+       FROM audit_logs
+       WHERE created_at >= ? AND action IN ('auth.login', 'project.create', 'project.update')`,
+    )
+      .bind(since14d)
+      .all<{ action: string; createdAt: number }>(),
+  ]);
+
+  // Build 14 daily buckets (YYYY-MM-DD)
+  const dayBuckets = new Map<string, { date: string; saves: number; logins: number }>();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(now - i * 24 * 60 * 60 * 1000);
+    const key = d.toISOString().slice(0, 10);
+    dayBuckets.set(key, { date: key, saves: 0, logins: 0 });
+  }
+  for (const row of raw14d.results ?? []) {
+    const key = new Date(row.createdAt).toISOString().slice(0, 10);
+    const b = dayBuckets.get(key);
+    if (!b) continue;
+    if (row.action === 'auth.login') b.logins++;
+    else b.saves++;
+  }
 
   return c.json({
     stats: {
@@ -92,11 +129,16 @@ adminRoutes.get('/overview', async (c) => {
       totalQuotaBytes: Number(userStats?.totalQuotaBytes ?? 0),
       totalProjects: Number(projectStats?.totalProjects ?? 0),
       sharedProjects: Number(projectStats?.sharedProjects ?? 0),
+      privateProjects: Number(projectStats?.privateProjects ?? 0),
+      draftProjects: Number(projectStats?.draftProjects ?? 0),
+      reviewProjects: Number(projectStats?.reviewProjects ?? 0),
+      approvedProjects: Number(projectStats?.approvedProjects ?? 0),
       totalAssetRefs: Number(projectStats?.totalAssetRefs ?? 0),
       uniqueR2Objects: Number(r2Stats?.uniqueObjects ?? 0),
       totalR2Bytes: Number(r2Stats?.totalR2Bytes ?? 0),
       activity7d: Number(recentActivityCount?.cnt ?? 0),
     },
+    activity14d: [...dayBuckets.values()],
     topUsers: topUsers.results ?? [],
     recentLogs: recentLogs.results ?? [],
   });
@@ -155,10 +197,11 @@ adminRoutes.post('/users', async (c) => {
   const name = (body.name ?? '').trim();
   const password = body.password ?? '';
   const role: UserRole = body.role === 'admin' ? 'admin' : 'member';
+  const appSettings = await getAppSettings(c.env);
   const quotaBytes =
     body.quotaMb && Number.isFinite(body.quotaMb) && body.quotaMb > 0
       ? Math.round(body.quotaMb * 1024 * 1024)
-      : defaultQuotaBytes(c.env);
+      : appSettings.defaultQuotaMb * 1024 * 1024;
 
   if (!email || !email.includes('@')) {
     return c.json({ error: 'Email không hợp lệ' }, 400);
@@ -272,6 +315,36 @@ adminRoutes.patch('/users/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+adminRoutes.get('/users/:id/detail', async (c) => {
+  const targetId = c.req.param('id')!;
+  const now = Date.now();
+  const [projects, sessions] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, name, status, visibility, asset_count AS assetCount, total_bytes AS totalBytes, updated_at AS updatedAt
+       FROM projects WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 50`,
+    )
+      .bind(targetId)
+      .all(),
+    c.env.DB.prepare(
+      `SELECT id, user_agent AS userAgent, ip, created_at AS createdAt, expires_at AS expiresAt
+       FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC`,
+    )
+      .bind(targetId, now)
+      .all(),
+  ]);
+  return c.json({
+    projects: projects.results ?? [],
+    sessions: sessions.results ?? [],
+  });
+});
+
+adminRoutes.post('/users/:id/revoke-sessions', async (c) => {
+  const targetId = c.req.param('id')!;
+  const res = await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(targetId).run();
+  await logAudit(c, 'admin.user.revoke_sessions', 'user', targetId, { revoked: res.meta?.changes ?? 0 });
+  return c.json({ ok: true, revoked: res.meta?.changes ?? 0 });
+});
+
 adminRoutes.delete('/users/:id', async (c) => {
   const actor = c.get('user')!;
   const targetId = c.req.param('id');
@@ -293,17 +366,27 @@ adminRoutes.delete('/users/:id', async (c) => {
 adminRoutes.get('/projects', async (c) => {
   const q = (c.req.query('q') ?? '').trim().toLowerCase();
   const sharedOnly = c.req.query('shared') === '1';
+  const statusFilter = (c.req.query('status') ?? '').trim();
+  const visFilter = (c.req.query('visibility') ?? '').trim();
 
   const clauses: string[] = [];
   const binds: unknown[] = [];
 
   if (q) {
-    clauses.push('(LOWER(p.name) LIKE ? OR LOWER(u.email) LIKE ? OR LOWER(u.name) LIKE ?)');
+    clauses.push('(LOWER(p.name) LIKE ? OR LOWER(u.email) LIKE ? OR LOWER(u.name) LIKE ? OR LOWER(p.tags) LIKE ?)');
     const like = `%${q}%`;
-    binds.push(like, like, like);
+    binds.push(like, like, like, like);
   }
   if (sharedOnly) {
     clauses.push('p.share_enabled = 1');
+  }
+  if (statusFilter === 'draft' || statusFilter === 'review' || statusFilter === 'approved') {
+    clauses.push('p.status = ?');
+    binds.push(statusFilter);
+  }
+  if (visFilter === 'team' || visFilter === 'private') {
+    clauses.push('p.visibility = ?');
+    binds.push(visFilter);
   }
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -319,6 +402,9 @@ adminRoutes.get('/projects', async (c) => {
        p.total_bytes AS totalBytes,
        p.version,
        p.visibility,
+       p.status,
+       p.tags,
+       p.notes,
        p.share_enabled AS shareEnabled,
        p.share_token AS shareToken,
        p.created_at AS createdAt,
@@ -341,6 +427,9 @@ adminRoutes.get('/projects', async (c) => {
       totalBytes: number;
       version: number;
       visibility: string;
+      status: string;
+      tags: string;
+      notes: string;
       shareEnabled: number;
       shareToken: string | null;
       createdAt: number;
@@ -348,23 +437,138 @@ adminRoutes.get('/projects', async (c) => {
     }>();
 
   return c.json({
-    projects: (rows.results ?? []).map((r) => ({
-      id: r.id,
-      name: r.name,
-      ownerId: r.ownerId,
-      ownerName: r.ownerName,
-      ownerEmail: r.ownerEmail,
-      thumbnailUrl: r.thumbnailKey ? `/api/projects/${r.id}/thumbnail?v=${r.updatedAt}` : null,
-      assetCount: r.assetCount,
-      totalBytes: r.totalBytes,
-      version: r.version,
-      visibility: r.visibility === 'private' ? 'private' : 'team',
-      shareEnabled: r.shareEnabled === 1,
-      shareToken: r.shareEnabled === 1 ? r.shareToken : null,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    })),
+    projects: (rows.results ?? []).map((r) => {
+      let parsedTags: string[] = [];
+      try {
+        const t = JSON.parse(r.tags || '[]');
+        if (Array.isArray(t)) parsedTags = t.filter((x): x is string => typeof x === 'string');
+      } catch {
+        parsedTags = [];
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        ownerId: r.ownerId,
+        ownerName: r.ownerName,
+        ownerEmail: r.ownerEmail,
+        thumbnailUrl: r.thumbnailKey ? `/api/projects/${r.id}/thumbnail?v=${r.updatedAt}` : null,
+        assetCount: r.assetCount,
+        totalBytes: r.totalBytes,
+        version: r.version,
+        visibility: r.visibility === 'private' ? 'private' : 'team',
+        status: r.status === 'review' || r.status === 'approved' ? r.status : 'draft',
+        tags: parsedTags,
+        notes: r.notes ?? '',
+        shareEnabled: r.shareEnabled === 1,
+        shareToken: r.shareEnabled === 1 ? r.shareToken : null,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+    }),
   });
+});
+
+adminRoutes.patch('/projects/:id', async (c) => {
+  const projectId = c.req.param('id')!;
+  const body = await c.req
+    .json<{
+      status?: ProjectStatus;
+      visibility?: ProjectVisibility;
+      shareEnabled?: boolean;
+      ownerId?: string;
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          status?: ProjectStatus;
+          visibility?: ProjectVisibility;
+          shareEnabled?: boolean;
+          ownerId?: string;
+        },
+    );
+
+  const proj = await c.env.DB.prepare('SELECT id, name, owner_id FROM projects WHERE id = ?')
+    .bind(projectId)
+    .first<{ id: string; name: string; owner_id: string }>();
+  if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
+
+  const updates: string[] = [];
+  const binds: unknown[] = [];
+
+  if (body.status === 'draft' || body.status === 'review' || body.status === 'approved') {
+    updates.push('status = ?');
+    binds.push(body.status);
+  }
+  if (body.visibility === 'team' || body.visibility === 'private') {
+    updates.push('visibility = ?');
+    binds.push(body.visibility);
+  }
+  if (typeof body.shareEnabled === 'boolean') {
+    updates.push('share_enabled = ?');
+    binds.push(body.shareEnabled ? 1 : 0);
+  }
+  if (typeof body.ownerId === 'string' && body.ownerId.trim() && body.ownerId !== proj.owner_id) {
+    const newOwner = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+      .bind(body.ownerId.trim())
+      .first<{ id: string; email: string }>();
+    if (!newOwner) return c.json({ error: 'Không tìm thấy chủ sở hữu mới' }, 404);
+    updates.push('owner_id = ?');
+    binds.push(newOwner.id);
+    await c.env.DB.prepare('UPDATE assets SET owner_id = ? WHERE project_id = ?')
+      .bind(newOwner.id, projectId)
+      .run();
+  }
+
+  if (updates.length === 0) return c.json({ error: 'Không có thay đổi nào' }, 400);
+  updates.push('updated_at = ?');
+  binds.push(Date.now(), projectId);
+
+  await c.env.DB.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+  await logAudit(c, 'admin.project.update', 'project', projectId, { name: proj.name, ...body });
+  return c.json({ ok: true });
+});
+
+adminRoutes.get('/settings', async (c) => {
+  const settings = await getAppSettings(c.env);
+  return c.json({ settings });
+});
+
+adminRoutes.patch('/settings', async (c) => {
+  const body = await c.req
+    .json<{
+      defaultQuotaMb?: number;
+      defaultVisibility?: ProjectVisibility;
+      allowPublicShare?: boolean;
+      maxVersionsPerProject?: number;
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          defaultQuotaMb?: number;
+          defaultVisibility?: ProjectVisibility;
+          allowPublicShare?: boolean;
+          maxVersionsPerProject?: number;
+        },
+    );
+  const settings = await updateAppSettings(c.env, body);
+  await logAudit(c, 'admin.settings.update', 'system', 'app_settings', settings as unknown as Record<string, unknown>);
+  return c.json({ settings });
+});
+
+adminRoutes.post('/maintenance/sessions', async (c) => {
+  const res = await c.env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(Date.now()).run();
+  const deleted = res.meta?.changes ?? 0;
+  await logAudit(c, 'admin.maintenance.sessions', 'system', 'sessions', { deleted });
+  return c.json({ ok: true, deleted });
+});
+
+adminRoutes.post('/maintenance/r2-gc', async (c) => {
+  const body = await c.req.json<{ dryRun?: boolean }>().catch(() => ({}) as { dryRun?: boolean });
+  const result = await cleanOrphanR2Objects(c.env, Boolean(body.dryRun));
+  if (!body.dryRun) {
+    await logAudit(c, 'admin.maintenance.r2_gc', 'system', 'r2', result);
+  }
+  return c.json({ ok: true, ...result });
 });
 
 adminRoutes.delete('/projects/:id', async (c) => {

@@ -8,7 +8,7 @@ import {
   getUserUsedBytes,
   thumbR2Key,
 } from '../storage';
-import type { AppEnv, AssetRow, ProjectRow } from '../types';
+import type { AppEnv, AssetRow, ProjectRow, ProjectVisibility } from '../types';
 
 const MAX_ASSET_BYTES = 40 * 1024 * 1024; // 40 MB per asset
 const MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2 MB per thumbnail
@@ -23,11 +23,24 @@ interface AssetManifestItem {
   sha256: string;
 }
 
-function serializeProjectSummary(row: ProjectRow) {
+type ProjectWithOwnerRow = ProjectRow & {
+  owner_name?: string;
+  owner_email?: string;
+};
+
+function canReadProject(proj: { owner_id: string; visibility?: string }, user: { id: string; role: string }): boolean {
+  return proj.owner_id === user.id || user.role === 'admin' || (proj.visibility ?? 'team') === 'team';
+}
+
+function serializeProjectSummary(row: ProjectWithOwnerRow, viewerId?: string) {
   return {
     id: row.id,
     ownerId: row.owner_id,
+    ownerName: row.owner_name ?? null,
+    ownerEmail: row.owner_email ?? null,
+    isOwner: viewerId ? row.owner_id === viewerId : false,
     name: row.name,
+    visibility: (row.visibility === 'private' ? 'private' : 'team') as ProjectVisibility,
     hasThumbnail: Boolean(row.thumbnail_key),
     thumbnailUrl: row.thumbnail_key ? `/api/projects/${row.id}/thumbnail?v=${row.updated_at}` : null,
     assetCount: row.asset_count,
@@ -47,14 +60,18 @@ export const projectRoutes = new Hono<AppEnv>();
 projectRoutes.get('/projects', requireAuth, async (c) => {
   const user = c.get('user')!;
   const rows = await c.env.DB.prepare(
-    `SELECT * FROM projects WHERE owner_id = ? ORDER BY updated_at DESC`,
+    `SELECT p.*, u.name AS owner_name, u.email AS owner_email
+     FROM projects p
+     JOIN users u ON u.id = p.owner_id
+     WHERE p.owner_id = ? OR p.visibility = 'team'
+     ORDER BY p.updated_at DESC`,
   )
     .bind(user.id)
-    .all<ProjectRow>();
+    .all<ProjectWithOwnerRow>();
 
   const usedBytes = await getUserUsedBytes(c.env.DB, user.id);
   return c.json({
-    projects: (rows.results ?? []).map(serializeProjectSummary),
+    projects: (rows.results ?? []).map((r) => serializeProjectSummary(r, user.id)),
     usedBytes,
     quotaBytes: user.quotaBytes,
   });
@@ -66,6 +83,7 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
     .json<{
       id?: string;
       name?: string;
+      visibility?: ProjectVisibility;
       project?: Record<string, unknown>;
       assets?: AssetManifestItem[];
     }>()
@@ -85,7 +103,7 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
   if (projectId) {
     existing = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<ProjectRow>();
     if (existing && existing.owner_id !== user.id && user.role !== 'admin') {
-      return c.json({ error: 'Bạn không có quyền ghi đè project này' }, 403);
+      return c.json({ error: 'Bạn không có quyền ghi đè project của người khác (hãy dùng "Lưu bản mới")' }, 403);
     }
   }
   if (!existing) {
@@ -93,14 +111,31 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
   }
 
   const ownerId = existing ? existing.owner_id : user.id;
+  const visibility: ProjectVisibility =
+    body.visibility === 'private' || body.visibility === 'team'
+      ? body.visibility
+      : existing
+        ? existing.visibility === 'private'
+          ? 'private'
+          : 'team'
+        : 'team';
 
-  // Check which SHA-256 blobs are already uploaded in R2 for this owner
+  // Check which SHA-256 blobs are already uploaded in R2 for this owner (and verify in R2)
   const existingShaRows = await c.env.DB.prepare(
     'SELECT DISTINCT sha256 FROM assets WHERE owner_id = ? AND uploaded = 1',
   )
     .bind(ownerId)
     .all<{ sha256: string }>();
-  const knownShas = new Set((existingShaRows.results ?? []).map((r) => r.sha256));
+  const dbShas = new Set((existingShaRows.results ?? []).map((r) => r.sha256));
+  const knownShas = new Set<string>();
+
+  for (const item of manifest) {
+    if (!item.id || !item.sha256 || !dbShas.has(item.sha256) || knownShas.has(item.sha256)) continue;
+    const head = await c.env.BUCKET.head(assetR2Key(ownerId, item.sha256));
+    if (head) {
+      knownShas.add(item.sha256);
+    }
+  }
 
   // Estimate incremental bytes needed for new SHA-256 blobs
   const newShasSeen = new Set<string>();
@@ -134,17 +169,17 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
   if (existing) {
     await c.env.DB.prepare(
       `UPDATE projects
-       SET name = ?, data_json = ?, asset_count = ?, total_bytes = ?, version = version + 1, updated_at = ?
+       SET name = ?, data_json = ?, visibility = ?, asset_count = ?, total_bytes = ?, version = version + 1, updated_at = ?
        WHERE id = ?`,
     )
-      .bind(name, dataJson, manifest.length, totalProjectBytes, now, projectId)
+      .bind(name, dataJson, visibility, manifest.length, totalProjectBytes, now, projectId)
       .run();
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO projects (id, owner_id, name, data_json, asset_count, total_bytes, version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO projects (id, owner_id, name, data_json, visibility, asset_count, total_bytes, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     )
-      .bind(projectId, ownerId, name, dataJson, manifest.length, totalProjectBytes, now, now)
+      .bind(projectId, ownerId, name, dataJson, visibility, manifest.length, totalProjectBytes, now, now)
       .run();
   }
 
@@ -206,15 +241,22 @@ projectRoutes.post('/projects', requireAuth, async (c) => {
     await gcR2Keys(c.env, removedKeys);
   }
 
-  const saved = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<ProjectRow>();
+  const saved = await c.env.DB.prepare(
+    `SELECT p.*, u.name AS owner_name, u.email AS owner_email
+     FROM projects p JOIN users u ON u.id = p.owner_id
+     WHERE p.id = ?`,
+  )
+    .bind(projectId)
+    .first<ProjectWithOwnerRow>();
   await logAudit(c, existing ? 'project.update' : 'project.create', 'project', projectId, {
     name,
+    visibility,
     assetCount: manifest.length,
     missingUploads: missingAssets.length,
   });
 
   return c.json({
-    project: saved ? serializeProjectSummary(saved) : null,
+    project: saved ? serializeProjectSummary(saved, user.id) : null,
     missingAssets,
   });
 });
@@ -298,9 +340,15 @@ projectRoutes.get('/projects/:id', requireAuth, async (c) => {
   const user = c.get('user')!;
   const projectId = c.req.param('id')!;
 
-  const proj = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first<ProjectRow>();
+  const proj = await c.env.DB.prepare(
+    `SELECT p.*, u.name AS owner_name, u.email AS owner_email
+     FROM projects p JOIN users u ON u.id = p.owner_id
+     WHERE p.id = ?`,
+  )
+    .bind(projectId)
+    .first<ProjectWithOwnerRow>();
   if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
-  if (proj.owner_id !== user.id && user.role !== 'admin') {
+  if (!canReadProject(proj, user)) {
     return c.json({ error: 'Không có quyền truy cập' }, 403);
   }
 
@@ -309,7 +357,7 @@ projectRoutes.get('/projects/:id', requireAuth, async (c) => {
     .all<AssetRow>();
 
   return c.json({
-    meta: serializeProjectSummary(proj),
+    meta: serializeProjectSummary(proj, user.id),
     project: JSON.parse(proj.data_json),
     assets: (assetRows.results ?? []).map((a) => ({
       id: a.asset_id,
@@ -330,11 +378,11 @@ projectRoutes.get('/projects/:id/assets/:assetId', requireAuth, async (c) => {
   const projectId = c.req.param('id')!;
   const assetId = c.req.param('assetId')!;
 
-  const proj = await c.env.DB.prepare('SELECT owner_id FROM projects WHERE id = ?')
+  const proj = await c.env.DB.prepare('SELECT owner_id, visibility FROM projects WHERE id = ?')
     .bind(projectId)
-    .first<{ owner_id: string }>();
+    .first<{ owner_id: string; visibility: string }>();
   if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
-  if (proj.owner_id !== user.id && user.role !== 'admin') {
+  if (!canReadProject(proj, user)) {
     return c.json({ error: 'Không có quyền truy cập' }, 403);
   }
 
@@ -356,11 +404,11 @@ projectRoutes.get('/projects/:id/thumbnail', requireAuth, async (c) => {
   const user = c.get('user')!;
   const projectId = c.req.param('id')!;
 
-  const proj = await c.env.DB.prepare('SELECT owner_id, thumbnail_key FROM projects WHERE id = ?')
+  const proj = await c.env.DB.prepare('SELECT owner_id, visibility, thumbnail_key FROM projects WHERE id = ?')
     .bind(projectId)
-    .first<{ owner_id: string; thumbnail_key: string | null }>();
-  if (!proj || !proj.thumbnail_key) return c.notFound();
-  if (proj.owner_id !== user.id && user.role !== 'admin') {
+    .first<{ owner_id: string; visibility: string; thumbnail_key: string | null }>();
+  if (!proj?.thumbnail_key) return c.notFound();
+  if (!canReadProject(proj, user)) {
     return c.json({ error: 'Không có quyền truy cập' }, 403);
   }
 
@@ -371,6 +419,33 @@ projectRoutes.get('/projects/:id/thumbnail', requireAuth, async (c) => {
   headers.set('Content-Type', obj.httpMetadata?.contentType || 'image/webp');
   headers.set('Cache-Control', 'private, max-age=3600');
   return new Response(obj.body, { headers });
+});
+
+projectRoutes.patch('/projects/:id/visibility', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const projectId = c.req.param('id')!;
+  const body = await c.req
+    .json<{ visibility?: ProjectVisibility }>()
+    .catch(() => ({}) as { visibility?: ProjectVisibility });
+
+  if (body.visibility !== 'team' && body.visibility !== 'private') {
+    return c.json({ error: 'Giá trị visibility phải là "team" hoặc "private"' }, 400);
+  }
+
+  const proj = await c.env.DB.prepare('SELECT owner_id, name FROM projects WHERE id = ?')
+    .bind(projectId)
+    .first<{ owner_id: string; name: string }>();
+  if (!proj) return c.json({ error: 'Không tìm thấy project' }, 404);
+  if (proj.owner_id !== user.id && user.role !== 'admin') {
+    return c.json({ error: 'Chỉ chủ sở hữu hoặc Admin mới đổi được quyền hiển thị' }, 403);
+  }
+
+  await c.env.DB.prepare('UPDATE projects SET visibility = ?, updated_at = ? WHERE id = ?')
+    .bind(body.visibility, Date.now(), projectId)
+    .run();
+
+  await logAudit(c, 'project.visibility', 'project', projectId, { name: proj.name, visibility: body.visibility });
+  return c.json({ ok: true, visibility: body.visibility });
 });
 
 projectRoutes.post('/projects/:id/share', requireAuth, async (c) => {

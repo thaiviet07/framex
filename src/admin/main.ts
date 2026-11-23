@@ -62,6 +62,7 @@ interface AdminProjectItem {
   assetCount: number;
   totalBytes: number;
   version: number;
+  visibility: 'team' | 'private';
   shareEnabled: boolean;
   shareToken: string | null;
   createdAt: number;
@@ -122,6 +123,7 @@ function actionLabel(action: string): string {
     'project.update': 'Cập nhật project',
     'project.delete': 'Xóa project',
     'project.share': 'Đổi chia sẻ',
+    'project.visibility': 'Đổi hiển thị Team/Ẩn',
     'admin.user.create': 'Admin tạo user',
     'admin.user.update': 'Admin sửa user',
     'admin.user.delete': 'Admin xóa user',
@@ -620,9 +622,14 @@ async function renderProjects() {
         <td class="num">${formatBytes(p.totalBytes)}</td>
         <td>
           ${
+            p.visibility === 'team'
+              ? '<span class="pill pill-active">Toàn bộ user</span>'
+              : '<span class="pill pill-member">Đã ẩn</span>'
+          }
+          ${
             p.shareEnabled && p.shareToken
-              ? `<span class="pill pill-shared">Đang chia sẻ</span>`
-              : '<span class="muted">Riêng tư</span>'
+              ? ' <span class="pill pill-shared">Link công khai</span>'
+              : ''
           }
         </td>
         <td class="num muted">${formatDateTime(p.updatedAt)}</td>

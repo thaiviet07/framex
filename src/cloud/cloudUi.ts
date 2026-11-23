@@ -5,6 +5,7 @@ import {
   formatDateTime,
   type CloudProjectSummary,
   type CloudUser,
+  type ProjectVisibility,
 } from './api';
 
 export interface CloudHost {
@@ -93,6 +94,18 @@ function injectStyles() {
       display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
       background: rgba(245,158,11,0.16); color: #fcd34d;
     }
+    .fx-cloud-pill--team { background: rgba(34,197,94,0.15); color: #86efac; }
+    .fx-cloud-pill--private { background: rgba(255,255,255,0.09); color: #a1a1aa; }
+    .fx-cloud-tabs { display: flex; gap: 6px; }
+    .fx-cloud-tab {
+      padding: 5px 10px; border-radius: 7px; font-size: 12px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #9898a3;
+    }
+    .fx-cloud-tab.is-active { background: rgba(59,130,246,0.18); border-color: rgba(59,130,246,0.45); color: #93c5fd; }
+    .fx-cloud-check {
+      display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: #d4d4d8;
+      cursor: pointer; user-select: none; margin-top: 10px;
+    }
     .fx-share-banner {
       position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 8000;
       background: rgba(24,24,28,0.95); color: #f3f3f5; border: 1px solid rgba(255,255,255,0.14);
@@ -178,19 +191,33 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
     });
   };
 
+  let listFilter: 'all' | 'mine' | 'team' = 'all';
+
   const renderLibrary = async (user: CloudUser) => {
     body.innerHTML = '<div class="fx-cloud-muted">Đang tải danh sách dự án trên Cloudflare…</div>';
     const data = await cloudApi.listProjects();
     const projects: CloudProjectSummary[] = data.projects;
     const ratio = data.quotaBytes > 0 ? Math.min(1, data.usedBytes / data.quotaBytes) : 0;
     const active = host.getActiveProject();
+    const activeCloud = active.cloudId ? projects.find((x) => x.id === active.cloudId) : undefined;
+    const canUpdateActive = Boolean(activeCloud && (activeCloud.isOwner || user.role === 'admin'));
+
+    const savedHidePref = localStorage.getItem('fx_cloud_hide_on_save') === '1';
+    const hideChecked = activeCloud ? activeCloud.visibility === 'private' : savedHidePref;
+
+    const filtered = projects.filter((p) => {
+      if (listFilter === 'mine') return p.isOwner;
+      if (listFilter === 'team') return p.visibility === 'team';
+      return true;
+    });
 
     const listHtml =
-      projects.length === 0
-        ? '<div class="fx-cloud-muted">Chưa có dự án nào trên Cloud. Bấm "Lưu dự án hiện tại" để đồng bộ.</div>'
-        : projects
-            .map(
-              (p) => `
+      filtered.length === 0
+        ? '<div class="fx-cloud-muted">Chưa có dự án nào trong mục này. Bấm "Lưu lên Cloud" để đồng bộ.</div>'
+        : filtered
+            .map((p) => {
+              const canManage = p.isOwner || user.role === 'admin';
+              return `
             <div class="fx-cloud-item">
               ${
                 p.thumbnailUrl
@@ -198,23 +225,33 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
                   : '<div class="fx-cloud-thumb">FX</div>'
               }
               <div style="min-width:0">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   <strong>${esc(p.name)}</strong>
                   ${p.id === active.cloudId ? '<span class="fx-cloud-muted">(đang mở)</span>' : ''}
-                  ${p.shareEnabled ? '<span class="fx-cloud-pill">Đang chia sẻ</span>' : ''}
+                  ${
+                    p.visibility === 'team'
+                      ? '<span class="fx-cloud-pill fx-cloud-pill--team">Toàn bộ user</span>'
+                      : '<span class="fx-cloud-pill fx-cloud-pill--private">Đã ẩn</span>'
+                  }
+                  ${p.shareEnabled ? '<span class="fx-cloud-pill">Link công khai</span>' : ''}
                 </div>
                 <div class="fx-cloud-muted">
-                  v${p.version} · ${p.assetCount} asset · ${formatBytes(p.totalBytes)} · ${formatDateTime(p.updatedAt)}
+                  ${p.ownerName ? `${esc(p.ownerName)} · ` : ''}v${p.version} · ${p.assetCount} asset · ${formatBytes(p.totalBytes)} · ${formatDateTime(p.updatedAt)}
                 </div>
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-                <button type="button" class="fx-cloud-btn" data-open="${esc(p.id)}">Mở</button>
-                <button type="button" class="fx-cloud-btn" data-share="${esc(p.id)}" data-enabled="${p.shareEnabled ? '1' : '0'}">${p.shareEnabled ? 'Copy / Tắt share' : 'Chia sẻ'}</button>
-                <button type="button" class="fx-cloud-btn fx-cloud-btn--danger" data-del="${esc(p.id)}" data-name="${esc(p.name)}">Xóa</button>
+                <button type="button" class="fx-cloud-btn" data-open="${esc(p.id)}" data-manage="${canManage ? '1' : '0'}">Mở</button>
+                ${
+                  canManage
+                    ? `<button type="button" class="fx-cloud-btn" data-vis="${esc(p.id)}" data-next-vis="${p.visibility === 'team' ? 'private' : 'team'}">${p.visibility === 'team' ? 'Ẩn' : 'Hiện Team'}</button>
+                       <button type="button" class="fx-cloud-btn" data-share="${esc(p.id)}" data-enabled="${p.shareEnabled ? '1' : '0'}">${p.shareEnabled ? 'Link' : 'Chia sẻ link'}</button>
+                       <button type="button" class="fx-cloud-btn fx-cloud-btn--danger" data-del="${esc(p.id)}" data-name="${esc(p.name)}">Xóa</button>`
+                    : ''
+                }
               </div>
             </div>
-          `,
-            )
+          `;
+            })
             .join('');
 
     body.innerHTML = `
@@ -238,19 +275,23 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
         <div class="fx-cloud-row">
           <div>
             <strong>Tab hiện tại: ${esc(active.project.name)}</strong>
-            <div class="fx-cloud-muted">${active.assets.length} tài nguyên · chỉ tải lên ảnh mới (incremental R2)</div>
+            <div class="fx-cloud-muted">${active.assets.length} asset liên quan (artwork, mask, foil, HDRI) sẽ được đồng bộ lên R2</div>
           </div>
           <div style="display:flex;gap:8px">
             <button type="button" class="fx-cloud-btn fx-cloud-btn--primary" id="fxc-save">
-              ${active.cloudId ? 'Cập nhật lên Cloud' : 'Lưu lên Cloud'}
+              ${canUpdateActive ? 'Cập nhật lên Cloud' : 'Lưu lên Cloud'}
             </button>
             ${
-              active.cloudId
+              canUpdateActive
                 ? '<button type="button" class="fx-cloud-btn" id="fxc-save-copy">Lưu bản mới</button>'
                 : ''
             }
           </div>
         </div>
+        <label class="fx-cloud-check">
+          <input type="checkbox" id="fxc-hide-private" ${hideChecked ? 'checked' : ''}>
+          <span>Ẩn dự án (chỉ mình tôi & Admin thấy — mặc định tự chia sẻ cho toàn bộ user)</span>
+        </label>
         <div id="fxc-progress" style="display:none;margin-top:10px">
           <div class="fx-cloud-muted" id="fxc-progress-label">Đang lưu…</div>
           <div class="fx-cloud-bar"><div id="fxc-progress-bar" style="width:0%"></div></div>
@@ -260,11 +301,28 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
 
       <div>
         <div class="fx-cloud-row" style="margin-bottom:8px">
-          <strong style="font-size:13.5px">Dự án của bạn trên Cloud (${projects.length})</strong>
+          <strong style="font-size:13.5px">Thư viện dự án (${filtered.length}/${projects.length})</strong>
+          <div class="fx-cloud-tabs">
+            <button type="button" class="fx-cloud-tab ${listFilter === 'all' ? 'is-active' : ''}" data-filter="all">Tất cả</button>
+            <button type="button" class="fx-cloud-tab ${listFilter === 'team' ? 'is-active' : ''}" data-filter="team">Toàn bộ user</button>
+            <button type="button" class="fx-cloud-tab ${listFilter === 'mine' ? 'is-active' : ''}" data-filter="mine">Của tôi</button>
+          </div>
         </div>
         <div class="fx-cloud-list">${listHtml}</div>
       </div>
     `;
+
+    body.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        listFilter = btn.dataset.filter as 'all' | 'mine' | 'team';
+        void renderLibrary(user);
+      });
+    });
+
+    const hideCheckbox = body.querySelector('#fxc-hide-private') as HTMLInputElement;
+    hideCheckbox?.addEventListener('change', () => {
+      localStorage.setItem('fx_cloud_hide_on_save', hideCheckbox.checked ? '1' : '0');
+    });
 
     body.querySelector('#fxc-logout')?.addEventListener('click', async () => {
       await cloudApi.logout();
@@ -283,11 +341,14 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
       progWrap.style.display = 'block';
       saveBtn.disabled = true;
 
+      const visibility: ProjectVisibility = hideCheckbox?.checked ? 'private' : 'team';
+
       try {
         const cur = host.getActiveProject();
         const thumb = await host.captureThumbnail().catch(() => null);
         const saved = await cloudApi.saveProject(cur.project, cur.assets, {
-          cloudId: asNew ? undefined : cur.cloudId,
+          cloudId: asNew || !canUpdateActive ? undefined : cur.cloudId,
+          visibility,
           thumbnail: thumb,
           onProgress: (label, r) => {
             progLabel.textContent = label;
@@ -308,17 +369,33 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
     body.querySelectorAll<HTMLButtonElement>('[data-open]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.open!;
+        const canManage = btn.dataset.manage === '1';
         btn.disabled = true;
         btn.textContent = 'Đang tải…';
         try {
           const detail = await cloudApi.getProject(id);
           const downloaded = await cloudApi.downloadAssets(detail.assets);
-          host.openProjectInTab(detail.project, downloaded, detail.meta.id);
+          host.openProjectInTab(detail.project, downloaded, canManage ? detail.meta.id : undefined);
           close();
         } catch (err) {
           alert(err instanceof Error ? err.message : 'Không mở được dự án');
           btn.disabled = false;
           btn.textContent = 'Mở';
+        }
+      });
+    });
+
+    body.querySelectorAll<HTMLButtonElement>('[data-vis]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.vis!;
+        const nextVis = btn.dataset.nextVis as ProjectVisibility;
+        btn.disabled = true;
+        try {
+          await cloudApi.setVisibility(id, nextVis);
+          await renderLibrary(user);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : 'Lỗi đổi quyền hiển thị');
+          btn.disabled = false;
         }
       });
     });

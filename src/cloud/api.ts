@@ -2,6 +2,7 @@ import type { Asset, Project } from '../model/types';
 
 export type UserRole = 'admin' | 'member';
 export type UserStatus = 'active' | 'disabled';
+export type ProjectVisibility = 'team' | 'private';
 
 export interface CloudUser {
   id: string;
@@ -24,7 +25,11 @@ export interface AuthMeResponse {
 export interface CloudProjectSummary {
   id: string;
   ownerId: string;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  isOwner: boolean;
   name: string;
+  visibility: ProjectVisibility;
   hasThumbnail: boolean;
   thumbnailUrl: string | null;
   assetCount: number;
@@ -148,6 +153,14 @@ export const cloudApi = {
   getProject: (id: string) => apiJson<CloudProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),
   deleteProject: (id: string) =>
     apiJson<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  setVisibility: (id: string, visibility: ProjectVisibility) =>
+    apiJson<{ ok: boolean; visibility: ProjectVisibility }>(
+      `/api/projects/${encodeURIComponent(id)}/visibility`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ visibility }),
+      },
+    ),
   toggleShare: (id: string, enabled: boolean, regenerate = false) =>
     apiJson<{ shareEnabled: boolean; shareToken: string | null; shareUrl: string | null }>(
       `/api/projects/${encodeURIComponent(id)}/share`,
@@ -170,6 +183,7 @@ export const cloudApi = {
     assetList: Asset[],
     options?: {
       cloudId?: string;
+      visibility?: ProjectVisibility;
       thumbnail?: Blob | null;
       onProgress?: (label: string, ratio: number) => void;
     },
@@ -210,6 +224,7 @@ export const cloudApi = {
       body: JSON.stringify({
         id: options?.cloudId,
         name: project.name,
+        visibility: options?.visibility ?? 'team',
         project,
         assets: manifest,
       }),

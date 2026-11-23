@@ -11,6 +11,7 @@ export interface Env {
 
 export type UserRole = 'admin' | 'member';
 export type UserStatus = 'active' | 'disabled';
+export type ProjectVisibility = 'team' | 'private';
 
 export interface UserRow {
   id: string;
@@ -48,6 +49,7 @@ export interface ProjectRow {
   version: number;
   share_token: string | null;
   share_enabled: number;
+  visibility: ProjectVisibility;
   created_at: number;
   updated_at: number;
 }

@@ -879,6 +879,7 @@ function collectAssetIds(p: Project, out: Set<string>) {
   if (p.sides.front.artworkId) out.add(p.sides.front.artworkId);
   if (p.sides.back.artworkId) out.add(p.sides.back.artworkId);
   if (p.env?.customAssetId) out.add(p.env.customAssetId);
+  if (p.holo.foilId) out.add(p.holo.foilId);
   p.holo.layers.forEach((hl) => { if (hl.foilId) out.add(hl.foilId); });
   p.masks.forEach((m) => { if (m.sourceId) out.add(m.sourceId); });
 }

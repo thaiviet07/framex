@@ -318,6 +318,7 @@ adminRoutes.get('/projects', async (c) => {
        p.asset_count AS assetCount,
        p.total_bytes AS totalBytes,
        p.version,
+       p.visibility,
        p.share_enabled AS shareEnabled,
        p.share_token AS shareToken,
        p.created_at AS createdAt,
@@ -339,6 +340,7 @@ adminRoutes.get('/projects', async (c) => {
       assetCount: number;
       totalBytes: number;
       version: number;
+      visibility: string;
       shareEnabled: number;
       shareToken: string | null;
       createdAt: number;
@@ -356,6 +358,7 @@ adminRoutes.get('/projects', async (c) => {
       assetCount: r.assetCount,
       totalBytes: r.totalBytes,
       version: r.version,
+      visibility: r.visibility === 'private' ? 'private' : 'team',
       shareEnabled: r.shareEnabled === 1,
       shareToken: r.shareEnabled === 1 ? r.shareToken : null,
       createdAt: r.createdAt,

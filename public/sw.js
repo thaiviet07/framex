@@ -1,5 +1,5 @@
 // Lightweight offline-capable service worker for FX Studio
-const CACHE_NAME = 'fx-studio-v2';
+const CACHE_NAME = 'fx-studio-v3';
 const PRECACHE = [
   './',
   './index.html',
@@ -35,8 +35,15 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  // Skip large optional reference archive from SW cache
-  if (url.pathname.endsWith('Card_Reference.zip')) return;
+  // Skip API, admin, share routes and large optional reference archive from SW cache
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/admin') ||
+    url.pathname.startsWith('/share/') ||
+    url.pathname.endsWith('Card_Reference.zip')
+  ) {
+    return;
+  }
 
   // Immutable hashed assets: cache-first
   if (url.pathname.includes('/assets/') || url.pathname.includes('/css/') || url.pathname.includes('/img/')) {

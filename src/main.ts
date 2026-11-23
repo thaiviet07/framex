@@ -13,10 +13,11 @@ import { renderFlat } from './render/FlatRenderer';
 import { imaging } from './imaging/client';
 import { PREFLIGHT_HEIGHT, runPreflight, type PreflightIssue } from './preflight/preflight';
 import { loadWorkspaceTabs, requestPersistentStorage, saveWorkspaceTabs } from './storage/db';
-// Heavy modules (pdf-lib, fflate, mp4-muxer) are code-split and only fetched on demand.
+// Heavy modules (pdf-lib, fflate, mp4-muxer, cloud UI) are code-split and only fetched on demand.
 const loadExporter = () => import('./export/exporter');
 const loadMockup = () => import('./export/mockupVideo');
 const loadProjectFile = () => import('./storage/projectFile');
+const loadCloudUi = () => import('./cloud/cloudUi');
 import { renderPanel, type PanelCallbacks } from './ui/panels';
 import { clamp, debounce, uid } from './core/math';
 import { getLang, setLang, t, type Lang } from './i18n/i18n';
@@ -46,6 +47,7 @@ const projectNameInput = $<HTMLInputElement>('#project-name');
 interface TabEntry {
   id: string;
   project: Project;
+  cloudId?: string;
   preflight: PreflightIssue[];
   zoom: number;
   panX: number;
@@ -331,6 +333,10 @@ $('#btn-new-proj').addEventListener('click', () => void createNewTab());
 $('#doc-tab-new').addEventListener('click', () => void createNewTab());
 $('#doc-tab-dup').addEventListener('click', () => duplicateActiveTab());
 $('#btn-save-proj').addEventListener('click', () => void saveProjectFile());
+$('#btn-cloud').addEventListener('click', async () => {
+  const { openCloudModal } = await loadCloudUi();
+  await openCloudModal(cloudHost);
+});
 $('#btn-open-proj').addEventListener('click', () => $<HTMLInputElement>('#input-open-proj').click());
 $<HTMLInputElement>('#input-open-proj').addEventListener('change', async (e) => {
   const input = e.target as HTMLInputElement;
@@ -884,7 +890,7 @@ const persist = debounce(() => {
   for (const tab of projectTabs) collectAssetIds(tab.project, keep);
   assets.gc(keep);
   void saveWorkspaceTabs(
-    { activeId: activeTabId, tabs: projectTabs.map((t) => ({ id: t.id, project: t.project })) },
+    { activeId: activeTabId, tabs: projectTabs.map((t) => ({ id: t.id, project: t.project, cloudId: t.cloudId })) },
     assets.all(),
   );
 }, 600);
@@ -1131,6 +1137,54 @@ store.subscribe((p, ui, changed) => {
   updateStatus();
 });
 
+// ---------------- Cloudflare Cloud Host ----------------
+const cloudHost = {
+  getActiveProject() {
+    saveCurrentTabSnapshot();
+    const cur = projectTabs.find((x) => x.id === activeTabId);
+    const proj = store.project;
+    const ids = new Set<string>();
+    collectAssetIds(proj, ids);
+    const list = assets.all().filter((a) => ids.has(a.id));
+    return { project: proj, assets: list, cloudId: cur?.cloudId };
+  },
+  setActiveCloudId(cloudId: string) {
+    const cur = projectTabs.find((x) => x.id === activeTabId);
+    if (cur) {
+      cur.cloudId = cloudId;
+      persist();
+    }
+  },
+  async captureThumbnail(): Promise<Blob | null> {
+    const png = await captureMockupBlob();
+    if (!png) return null;
+    try {
+      const bmp = await createImageBitmap(png);
+      const targetH = 360;
+      const targetW = Math.max(1, Math.round((bmp.width / bmp.height) * targetH));
+      const c = document.createElement('canvas');
+      c.width = targetW;
+      c.height = targetH;
+      const ctx = c.getContext('2d');
+      ctx?.drawImage(bmp, 0, 0, targetW, targetH);
+      bmp.close();
+      return await new Promise<Blob | null>((resolve) => c.toBlob((b) => resolve(b), 'image/webp', 0.82));
+    } catch {
+      return png;
+    }
+  },
+  openProjectInTab(project: Project, assetList: import('./model/types').Asset[], cloudId?: string) {
+    project.holo = normalizeHolo(project.holo, DEFAULT_STYLE);
+    project.env = normalizeEnv(project.env);
+    assetList.forEach((a) => assets.restore(a));
+    saveCurrentTabSnapshot();
+    const newTab: TabEntry = { id: uid('tab'), project, cloudId, preflight: [], zoom: 1, panX: 0, panY: 0 };
+    projectTabs.push(newTab);
+    activateTab(newTab.id);
+    persist();
+  },
+};
+
 // ---------------- Bootstrap ----------------
 async function boot() {
   applyLangUI();
@@ -1158,6 +1212,7 @@ async function boot() {
     projectTabs = saved.workspace.tabs.map((st) => ({
       id: st.id,
       project: { ...st.project, holo: normalizeHolo(st.project.holo, DEFAULT_STYLE), env: normalizeEnv(st.project.env) },
+      cloudId: st.cloudId,
       preflight: [],
       zoom: 1,
       panX: 0,
@@ -1171,6 +1226,16 @@ async function boot() {
     activateTab(projectTabs[0].id);
   }
   void requestPersistentStorage();
+
+  const shareToken = new URLSearchParams(location.search).get('share');
+  if (shareToken) {
+    try {
+      const { loadSharedProjectIntoStudio } = await loadCloudUi();
+      await loadSharedProjectIntoStudio(shareToken, cloudHost);
+    } catch (err) {
+      alert(`Không mở được liên kết chia sẻ: ${(err as Error).message}`);
+    }
+  }
 }
 
 void boot();

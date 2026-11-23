@@ -1,12 +1,33 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "framex",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-11-19",
   "observability": {
     "enabled": true
   },
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": ["/api/*", "/admin", "/admin/*", "/share/*"]
+  },
+  "vars": {
+    "APP_NAME": "FX Studio",
+    "DEFAULT_QUOTA_MB": "500"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "framex-db",
+      "database_id": "f4e9d6da-14c6-4134-b2a2-d8b5c2f2ec49",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "framex-assets"
+    }
+  ]
 }

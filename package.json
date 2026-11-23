@@ -9,20 +9,27 @@
     "build": "tsc --noEmit && vite build",
     "build:debug": "SOURCEMAP=true tsc --noEmit && SOURCEMAP=true vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "lint": "biome lint",
     "test": "vitest run",
     "check:size": "node scripts/check-bundle-size.mjs",
+    "cf:dev": "wrangler dev",
+    "cf:migrate:local": "wrangler d1 migrations apply framex-db --local",
+    "cf:migrate:remote": "wrangler d1 migrations apply framex-db --remote",
+    "cf:deploy": "npm run build && wrangler deploy",
     "ci": "npm run typecheck && npm run lint && npm test && npm run build && npm run check:size"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "@cloudflare/workers-types": "^5.20261123.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
   },
   "dependencies": {
     "fflate": "^0.8.3",
+    "hono": "^4.13.20",
     "mp4-muxer": "^5.2.2",
     "pdf-lib": "^1.17.1"
   }

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { execSync } from 'node:child_process';
+import { resolve } from 'node:path';
 
 function gitSha(): string {
   if (process.env.CF_PAGES_COMMIT_SHA) return process.env.CF_PAGES_COMMIT_SHA.slice(0, 7);
@@ -26,6 +27,18 @@ export default defineConfig({
     // Heavy export libs (pdf-lib, fflate, mp4-muxer) are split via dynamic import().
     chunkSizeWarningLimit: 600,
     reportCompressedSize: true,
+    rollupOptions: {
+      input: {
+        index: resolve(import.meta.dirname, 'index.html'),
+        admin: resolve(import.meta.dirname, 'admin.html'),
+      },
+    },
   },
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': 'http://127.0.0.1:8787',
+      '/share': 'http://127.0.0.1:8787',
+    },
+  },
 });

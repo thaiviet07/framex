@@ -8,6 +8,7 @@ const STORE_ASSETS = 'assets';
 export interface SavedTab {
   id: string;
   project: Project;
+  cloudId?: string;
 }
 
 export interface SavedWorkspace {

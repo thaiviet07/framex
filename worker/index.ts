@@ -35,6 +35,15 @@ app.get('/admin/*', async (c) => {
   return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
 });
 
+// Serve User Portal SPA entry at /portal and /portal/*
+app.get('/portal', async (c) => {
+  return c.env.ASSETS.fetch(c.req.raw);
+});
+app.get('/portal/*', async (c) => {
+  const url = new URL('/portal', c.req.url);
+  return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
+});
+
 // Fallback to Cloudflare Static Assets
 app.all('*', async (c) => {
   return c.env.ASSETS.fetch(c.req.raw);

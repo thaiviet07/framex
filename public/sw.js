@@ -39,6 +39,7 @@ self.addEventListener('fetch', (event) => {
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/admin') ||
+    url.pathname.startsWith('/portal') ||
     url.pathname.startsWith('/share/') ||
     url.pathname.endsWith('Card_Reference.zip')
   ) {

@@ -716,6 +716,98 @@ projectRoutes.post('/projects/:id/share', requireAuth, async (c) => {
   });
 });
 
+projectRoutes.post('/projects/:id/duplicate', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  const sourceId = c.req.param('id')!;
+
+  const src = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(sourceId).first<ProjectRow>();
+  if (!src) return c.json({ error: 'Không tìm thấy project' }, 404);
+  if (!canReadProject(src, user)) {
+    return c.json({ error: 'Không có quyền nhân bản project này' }, 403);
+  }
+
+  const now = Date.now();
+  const newId = randomId('prj');
+  const newName = `${src.name} (Bản sao)`.slice(0, 120);
+  let dataObj: Record<string, unknown> = {};
+  try {
+    dataObj = JSON.parse(src.data_json);
+    dataObj.name = newName;
+  } catch {
+    dataObj = { name: newName };
+  }
+  const newDataJson = JSON.stringify(dataObj);
+
+  let newThumbKey: string | null = null;
+  if (src.thumbnail_key) {
+    const thumbObj = await c.env.BUCKET.get(src.thumbnail_key);
+    if (thumbObj) {
+      newThumbKey = thumbR2Key(newId);
+      await c.env.BUCKET.put(newThumbKey, await thumbObj.arrayBuffer(), {
+        httpMetadata: { contentType: thumbObj.httpMetadata?.contentType || 'image/webp' },
+      });
+    }
+  }
+
+  const settings = await getAppSettings(c.env);
+  await c.env.DB.prepare(
+    `INSERT INTO projects (id, owner_id, name, data_json, thumbnail_key, visibility, status, tags, notes, asset_count, total_bytes, version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, ?, ?)`,
+  )
+    .bind(
+      newId,
+      user.id,
+      newName,
+      newDataJson,
+      newThumbKey,
+      settings.defaultVisibility,
+      src.tags ?? '[]',
+      src.notes ?? '',
+      src.asset_count,
+      src.total_bytes,
+      now,
+      now,
+    )
+    .run();
+
+  const srcAssets = await c.env.DB.prepare('SELECT * FROM assets WHERE project_id = ?')
+    .bind(sourceId)
+    .all<AssetRow>();
+  for (const a of srcAssets.results ?? []) {
+    await c.env.DB.prepare(
+      `INSERT INTO assets (id, project_id, owner_id, asset_id, name, mime_type, width, height, size_bytes, sha256, r2_key, uploaded, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        `${newId}:${a.asset_id}`,
+        newId,
+        user.id,
+        a.asset_id,
+        a.name,
+        a.mime_type,
+        a.width,
+        a.height,
+        a.size_bytes,
+        a.sha256,
+        a.r2_key,
+        a.uploaded,
+        now,
+      )
+      .run();
+  }
+
+  await logAudit(c, 'project.duplicate', 'project', newId, { sourceId, name: newName });
+  const saved = await c.env.DB.prepare(
+    `SELECT p.*, u.name AS owner_name, u.email AS owner_email
+     FROM projects p JOIN users u ON u.id = p.owner_id
+     WHERE p.id = ?`,
+  )
+    .bind(newId)
+    .first<ProjectWithOwnerRow>();
+
+  return c.json({ project: saved ? serializeProjectSummary(saved, user.id) : null }, 201);
+});
+
 projectRoutes.delete('/projects/:id', requireAuth, async (c) => {
   const user = c.get('user')!;
   const projectId = c.req.param('id')!;

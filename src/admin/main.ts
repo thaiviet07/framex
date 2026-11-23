@@ -156,6 +156,7 @@ function actionLabel(action: string): string {
     'auth.sessions_revoke_others': 'Đăng xuất thiết bị khác',
     'project.create': 'Tạo project',
     'project.update': 'Cập nhật project',
+    'project.duplicate': 'Nhân bản project',
     'project.meta': 'Sửa thông tin project',
     'project.delete': 'Xóa project',
     'project.share': 'Đổi chia sẻ link',
@@ -355,6 +356,7 @@ function renderShell(contentHtml: string) {
             <div class="sb-user-name">${esc(currentUser?.name)}</div>
             <div class="sb-user-email">${esc(currentUser?.email)}</div>
           </div>
+          <a class="btn btn-sm" href="/portal">User Portal (/portal)</a>
           <a class="btn btn-sm" href="/">Mở FX Studio</a>
           <button class="btn btn-sm" id="btn-logout" type="button">Đăng xuất</button>
         </div>

@@ -451,6 +451,7 @@ export async function openCloudModal(host: CloudHost): Promise<void> {
             </div>
           </div>
           <div style="display:flex;gap:8px">
+            <a class="fx-cloud-btn" href="/portal">User Portal (/portal)</a>
             ${user.role === 'admin' ? '<a class="fx-cloud-btn" href="/admin">Quản trị (/admin)</a>' : ''}
             <button type="button" class="fx-cloud-btn" id="fxc-logout">Đăng xuất</button>
           </div>

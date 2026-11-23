@@ -31,6 +31,7 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, 'index.html'),
         admin: resolve(import.meta.dirname, 'admin.html'),
+        portal: resolve(import.meta.dirname, 'portal.html'),
       },
     },
   },

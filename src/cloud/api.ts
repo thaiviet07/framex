@@ -210,6 +210,10 @@ export const cloudApi = {
   getProject: (id: string) => apiJson<CloudProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),
   deleteProject: (id: string) =>
     apiJson<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  duplicateProject: (id: string) =>
+    apiJson<{ project: CloudProjectSummary }>(`/api/projects/${encodeURIComponent(id)}/duplicate`, {
+      method: 'POST',
+    }),
   setVisibility: (id: string, visibility: ProjectVisibility) =>
     apiJson<{ ok: boolean; visibility: ProjectVisibility }>(
       `/api/projects/${encodeURIComponent(id)}/visibility`,
